@@ -5,26 +5,23 @@ create table repos (
 );
 
 create table folders (
-    "name" text primary key,
+    "name" text.
     "repo" text,
-    "description" text
+    "description" text,
+    primary key ("name", "repo")
 );
 
 create table files (
-    "name" text primary key,
-    "folder" text,
-    "code" text,
-    "description" text
-);
-
-create table components (
     "name" text,
-    "file" text,
-    "type" text,
+    "folder" text,
+    "repo" text,
     "code" text,
     "description" text,
-    primary key ("name", "file")
+    primary key ("name", "folder", "repo")
 );
 
 -- migrate:down
 
+drop table contents;
+drop table files;
+drop table folders;

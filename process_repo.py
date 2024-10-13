@@ -23,11 +23,8 @@ cur = conn.cursor()
 
 # SQL queries
 INSERT_REPO = """INSERT INTO repos ("name", "description") VALUES (%s, %s) ON CONFLICT ("name") DO NOTHING;"""
-INSERT_FOLDER = """INSERT INTO folders ("name", "repo", "description") VALUES (%s, %s, %s) ON CONFLICT ("name") DO NOTHING;"""
-INSERT_FILE = """INSERT INTO files ("name", "folder", "description") VALUES (%s, %s, %s) ON CONFLICT ("name") DO NOTHING;"""
-INSERT_COMPONENT = """INSERT INTO components ("name", "file", "type", "code", "description") 
-                     VALUES (%s, %s, %s, %s, %s) 
-                     ON CONFLICT ("name", "file") DO NOTHING;"""
+INSERT_FOLDER = """INSERT INTO folders ("name", "repo", "description") VALUES (%s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
+INSERT_FILE = """INSERT INTO files ("name", "folder", "repo", "code", "description") VALUES (%s, %s, %s, %s, %s) ON CONFLICT ("name", "folder", "repo") DO NOTHING;"""
 
 # Database insert functions
 
@@ -43,15 +40,9 @@ def insert_folder(folder_name, repo_name, folder_description):
     conn.commit()
 
 
-def insert_file(file_name, folder_name, file_content, file_description):
-    cur.execute(INSERT_FILE, (file_name, folder_name, file_content,
-                file_description.strip()))
-    conn.commit()
-
-
-def insert_component(component_name, file_name, component_type, code, description):
-    cur.execute(INSERT_COMPONENT, (component_name, file_name,
-                component_type, code, description.strip()))
+def insert_file(file_name, folder_name, repo_name, file_content, description):
+    cur.execute(INSERT_FILE, (file_name, folder_name, repo_name, file_content,
+                description.strip()))
     conn.commit()
 
 # Asking functions
@@ -60,7 +51,6 @@ def insert_component(component_name, file_name, component_type, code, descriptio
 def ask_replicate(prompt: str) -> str:
     answer = ""
     for event in replicate.stream("meta/meta-llama-3-70b-instruct", input={"prompt": prompt, "max_tokens": 4000}):
-        print(event, end="")
         answer += str(event)
     return answer
 
@@ -99,36 +89,30 @@ def ask(prompt: str, type: str = "text", level=0) -> str:
 
 
 # Summarization prompts
-COMPONENT_PROMPT = """
-Here is some code that belongs to a Postgres extension. Return a valid JSON array containing the following schema. Do not include any comments or text other than the JSON array. Try to keep it under 300 words.
-{
-'name': 'component_name',
-'type': 'component_type',
-'code': '<the code>',
-'description': 'What the component does'
-}
-"""
-
 FILE_PROMPT = """
-Here is some code that belongs to a Postgres extension. Summarize what the code does. Try to keep it under 1000 words.
+Here is some code that belongs to a Postgres extension. Summarize what the code does in under 400 words.
 """
 
 FILE_SUMMARIES_PROMPT = """
-Here are multiple summaries of sections of a file that belongs to a Postgres extension. Summarize what the code does. Try to keep it under 1000 words.
-"""
-
-FILE_CHUNK_PROMPT = """
-Here is part of the code that belongs to a Postgres extension. Summarize what the code does. Try to keep it under 1000 words.
+Here are multiple summaries of sections of a file that belongs to a Postgres extension. Summarize what the code does. Try to keep it under 800 words.
 """
 
 FOLDER_PROMPT = """
-Here are the summaries of the files in this folder, which belongs to a Postgres extension. Summarize what the folder does. Try to keep it under 1000 words.
+Here are the summaries of the files in this folder, which belongs to a Postgres extension. Summarize what the folder does. Try to keep it under 800 words.
+"""
+
+FOLDER_SUMMARIES_PROMPT = """
+Here are multiple summaries of the files in this folder, which belongs to a Postgres extension. Summarize what the folder does. Try to keep it under 800 words.
+"""
+
+REPO_PROMPT = """
+Here are the summaries of the folders in this repository, which belongs to a Postgres extension. Summarize what the repository does.
 """
 
 # Processing files and folders
 
 
-def chunk_file_by_function(file_content, max_chars=10000):
+def chunk_file(file_name, file_content):
     """
     Splits the file content into chunks, ensuring that each chunk ends at a function boundary.
     Specifically, it looks for `}` at the beginning of a line as a natural break point.
@@ -144,9 +128,12 @@ def chunk_file_by_function(file_content, max_chars=10000):
         current_chunk.append(line)
         current_size += len(line)
 
-        # If we've reached a size limit, look for the next `}` at the start of a line
-        if current_size >= max_chars and re.match(r'^\s*\}', line):
-            # Join the current chunk into a string and add it to the list of chunks
+        # If we've reached a size limit
+        if (
+            (current_size >= 10000 and re.match(r'^\s*\}', line))
+            or (current_size >= 15000 and re.match(r'^\s{2}\}', line))
+            or (current_size >= 15000 and re.match(r'^\s{2}end', line) and file_name.endswith('.rb'))
+        ):
             chunks.append("\n".join(current_chunk))
             current_chunk = []
             current_size = 0
@@ -158,72 +145,94 @@ def chunk_file_by_function(file_content, max_chars=10000):
     return chunks
 
 
-def process_file(file_path, folder_name):
+def process_file(file_path, folder_name, repo_name):
+    file_name = os.path.basename(file_path)
+
+    # If file already has a summary, skip processing and just return it
+    cur.execute(
+        """SELECT "description" FROM files WHERE name = %s AND folder = %s;""", (file_name, folder_name))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-        file_name = os.path.basename(file_path)
         file_content = f.read()
 
         # Break the file into chunks, ensuring we don't split in the middle of functions
-        chunks = chunk_file_by_function(file_content)
+        chunks = chunk_file(file_name, file_content)
 
         # Summarize each chunk and combine summaries
-        final_summary = ""
+        description = ""
         if len(chunks) == 1:
-            final_summary = ask(FILE_PROMPT + "\n\nFile: " +
-                                file_name + "\n\n" + chunks[0])
-            final_components = ask(
-                COMPONENT_PROMPT + "\n\nFile: " + file_name +
-                "\n\n" + file_content, 'json_object'
-            )
-            final_components = final_components
+            description = ask(FILE_PROMPT + "\n\nFile: " +
+                              file_name + "\n\n" + chunks[0])
         else:
-            all_summaries = []
-            final_components = []
+            descriptions = []
             for chunk in chunks:
-                summary = ask(FILE_CHUNK_PROMPT + chunk)
-                all_summaries.append(summary)
-                components = ask(
-                    COMPONENT_PROMPT + "\n\nPart of file: " + file_name +
-                    "\n\n" + chunk, 'json_object'
-                )
-                components = components
-                final_components.extend(components)
-            final_summary = ask(FILE_SUMMARIES_PROMPT +
-                                "\n\nFile: " + file_name + "\n\n" + "\n".join(all_summaries))
+                descriptions.append(
+                    ask(FILE_PROMPT + "\n\nFile: " + file_name + "\n\n" + chunk))
+            description = ask(FILE_SUMMARIES_PROMPT +
+                              "\n\nFile: " + file_name + "\n\n" + "\n".join(descriptions[:10]))
 
         # Insert the file and its components into the database
-        insert_file(file_name, folder_name, file_content, final_summary)
-        for component in final_components:
-            insert_component(component['name'], file_name, component['type'],
-                             component['code'], component['description'])
+        insert_file(file_name, folder_name, repo_name, file_content,
+                    description)
 
-        return final_summary
+        return description
 
 
-def process_folder(folder_path, repo_name):
+valid_endings = ['.rb', '.c']
+
+
+def process_folder(folder_path, repo_path, repo_name):
+    # If folder already has a summary, skip processing and just return it
+    cur.execute(
+        """SELECT "description" FROM folders WHERE name = %s AND repo = %s;""", (folder_path, repo_name))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
     # Full relative folder path
-    folder_name = os.path.relpath(folder_path, repo_name)
-    file_summaries = []
+    folder_name = os.path.relpath(folder_path, repo_path)
+    descriptions = []
 
     # Process each file in the folder
     for file in os.listdir(folder_path):
-        if file.endswith('.c'):
+        if os.path.splitext(file)[-1] in valid_endings:
             file_path = os.path.join(folder_path, file)
-            file_summary = process_file(file_path, folder_name)
-            file_summaries.append(file_summary)
+            description = process_file(
+                file_path, folder_name, repo_name)
+            descriptions.append(description)
 
-    # Summarize the folder based on its files
-    combined_summary = "\n".join(file_summaries)
-    folder_summary = ask(FOLDER_PROMPT + "\n\n" + combined_summary)
+    if len(descriptions) == 0:
+        return ""
+
+    if len(descriptions) < 28:
+        combined_description = ask(
+            FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
+    else:
+        combined_descriptions = []
+        for i in range(0, min(len(descriptions), 800), 28):
+            combined_description = ask(
+                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+28]))
+            combined_descriptions.append(combined_description)
+        combined_description = ask(
+            FOLDER_SUMMARIES_PROMPT + "\n\n" + "\n".join(combined_descriptions))
+
+    combined_description = combined_description.strip()
 
     # Insert the folder and its summary into the database
-    insert_folder(folder_name, repo_name, folder_summary)
+    insert_folder(folder_name, repo_name,  combined_description)
 
-    return folder_summary
+    return combined_description
 
 
-def main(repo_path):
-    repo_name = os.path.basename(repo_path)
+def main(repo_name, repo_path):
+    cur.execute("""SELECT "name" FROM repos WHERE name = %s;""", (repo_name,))
+    row = cur.fetchone()
+    if row:
+        print(f"Repository '{repo_name}' already processed. Exiting...")
+        return
 
     # Insert the repo as the top-level folder
     repo_summary = ""
@@ -231,19 +240,21 @@ def main(repo_path):
 
     # Walk through the directory tree
     for root, dirs, files in os.walk(repo_path, topdown=False):
-        # Pass repo_path to get relative paths
-        folder_summary = process_folder(root, repo_path)
-        folder_summaries.append(folder_summary)
+        folder_summary = process_folder(root, repo_path, repo_name)
+        if folder_summary:
+            folder_summaries.append(folder_summary)
 
     # Combine all folder summaries for the repo summary
-    repo_summary = "\n".join(folder_summaries)
-    insert_repo(repo_name, repo_summary)
+    repo_summary = ask(REPO_PROMPT + "\n\n" + "\n".join(folder_summaries))
+    insert_repo(repo_name, repo_summary.strip())
 
     print(f"\nSummary for the entire repository:\n{repo_summary}")
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
-        main(sys.argv[1])
+        main(sys.argv[1], sys.argv[2])
+        cur.close()
+        conn.close()
     else:
-        print("Usage: python script.py <path_to_repo>")
+        print("Usage: python script.py <repo> <path_to_repo>")
