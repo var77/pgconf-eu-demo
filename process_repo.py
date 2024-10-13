@@ -181,7 +181,7 @@ def process_file(file_path, folder_name, repo_name):
         return description
 
 
-valid_endings = ['.rb', '.c']
+valid_endings = ['.rb', '.c', '.cpp']
 
 
 def process_folder(folder_path, repo_path, repo_name):
@@ -207,14 +207,14 @@ def process_folder(folder_path, repo_path, repo_name):
     if len(descriptions) == 0:
         return ""
 
-    if len(descriptions) < 28:
+    if len(descriptions) < 25:
         combined_description = ask(
             FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
     else:
         combined_descriptions = []
-        for i in range(0, min(len(descriptions), 800), 28):
+        for i in range(0, min(len(descriptions), 625), 25):
             combined_description = ask(
-                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+28]))
+                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+25]))
             combined_descriptions.append(combined_description)
         combined_description = ask(
             FOLDER_SUMMARIES_PROMPT + "\n\n" + "\n".join(combined_descriptions))
@@ -245,10 +245,17 @@ def main(repo_name, repo_path):
             folder_summaries.append(folder_summary)
 
     # Combine all folder summaries for the repo summary
-    repo_summary = ask(REPO_PROMPT + "\n\n" + "\n".join(folder_summaries))
+    if len(folder_summaries) < 25:
+        repo_summary = ask(REPO_PROMPT + "\n\n" + "\n".join(folder_summaries))
+    else:
+        combined_folder_summaries = []
+        for i in range(0, min(len(folder_summaries), 625), 25):
+            combined_folder_summary = ask(
+                REPO_PROMPT + "\n\n" + "\n".join(folder_summaries[i:i+25]))
+            combined_folder_summaries.append(combined_folder_summary)
+        repo_summary = ask(
+            REPO_PROMPT + "\n\n" + "\n".join(combined_folder_summaries))
     insert_repo(repo_name, repo_summary.strip())
-
-    print(f"\nSummary for the entire repository:\n{repo_summary}")
 
 
 if __name__ == '__main__':
