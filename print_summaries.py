@@ -24,3 +24,15 @@ for row in rows:
     print('----------')
     print(row[1])
     print('--------------------------\n')
+
+if len(rows) == 0:
+    cur.execute(
+        """SELECT "name", "description" FROM files WHERE "repo" = %s;""", (repo,))
+    rows = cur.fetchall()
+
+    for row in rows:
+        print('--------------------------')
+        print("File:", row[0])
+        print('----------')
+        print(row[1])
+        print('--------------------------\n')
