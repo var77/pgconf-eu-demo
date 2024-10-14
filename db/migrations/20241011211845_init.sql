@@ -1,23 +1,27 @@
 -- migrate:up
 create table repos (
-    "name" text primary key,
-    "description" text
+    "model" text,
+    "name" text,
+    "description" text,
+    primary key ("model", "name")
 );
 
 create table folders (
-    "name" text.
+    "model" text,
     "repo" text,
+    "name" text.
     "description" text,
-    primary key ("name", "repo")
+    primary key ("model", "name", "repo")
 );
 
 create table files (
-    "name" text,
-    "folder" text,
+    "model" text,
     "repo" text,
+    "folder" text,
+    "name" text,
     "code" text,
     "description" text,
-    primary key ("name", "folder", "repo")
+    primary key ("model", "name", "folder", "repo")
 );
 
 -- migrate:down

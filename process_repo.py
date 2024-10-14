@@ -15,19 +15,20 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # OpenAI client
 client = OpenAI(api_key=OPENAI_KEY)
 MODEL = "gpt-4o-mini"
-USE_OPENAI = False
+USE_OPENAI = True
 CONTEXT_WINDOW = 128000
 if not USE_OPENAI:
     CONTEXT_WINDOW = 8000
+    MODEL = "replicate"
 
 # Establish DB connection
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 # SQL queries
-INSERT_REPO = """INSERT INTO repos ("name", "description") VALUES (%s, %s) ON CONFLICT ("name") DO NOTHING;"""
-INSERT_FOLDER = """INSERT INTO folders ("name", "repo", "description") VALUES (%s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
-INSERT_FILE = """INSERT INTO files ("name", "folder", "repo", "code", "description") VALUES (%s, %s, %s, %s, %s) ON CONFLICT ("name", "folder", "repo") DO NOTHING;"""
+INSERT_REPO = f"""INSERT INTO repos ("name", "description", "model") VALUES (%s, %s, '{MODEL}') ON CONFLICT ("name", "model") DO NOTHING;"""
+INSERT_FOLDER = f"""INSERT INTO folders ("name", "repo", "description", "model") VALUES (%s, %s, %s, '{MODEL}') ON CONFLICT ("name", "repo", "model") DO NOTHING;"""
+INSERT_FILE = f"""INSERT INTO files ("name", "folder", "repo", "code", "description", "model") VALUES (%s, %s, %s, %s, %s, '{MODEL}') ON CONFLICT ("name", "folder", "repo", "model") DO NOTHING;"""
 
 # Database insert functions
 
@@ -150,7 +151,7 @@ def process_file(file_path, folder_name, repo_name):
 
     # If file already has a summary, skip processing and just return it
     cur.execute(
-        """SELECT "description" FROM files WHERE name = %s AND folder = %s;""", (file_name, folder_name))
+        """SELECT "description" FROM files WHERE "name" = %s AND "folder" = %s AND "repo" = %s AND "model" = %s;""", (file_name, folder_name, repo_name, MODEL))
     row = cur.fetchone()
     if row:
         return row[0]
@@ -182,13 +183,13 @@ def process_file(file_path, folder_name, repo_name):
         return description
 
 
-valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc']
+valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc', '.h']
 
 
 def process_folder(folder_path, repo_path, repo_name):
     # If folder already has a summary, skip processing and just return it
     cur.execute(
-        """SELECT "description" FROM folders WHERE name = %s AND repo = %s;""", (folder_path, repo_name))
+        """SELECT "description" FROM folders WHERE "name" = %s AND "repo" = %s AND "model" = %s;""", (folder_path, repo_name, MODEL))
     row = cur.fetchone()
     if row:
         return row[0]
@@ -207,7 +208,7 @@ def process_folder(folder_path, repo_path, repo_name):
             # Retrieve the summary of the subfolder from the database
             subfolder_name = os.path.relpath(item_path, repo_path)
             cur.execute(
-                """SELECT "description" FROM folders WHERE name = %s AND repo = %s;""", (subfolder_name, repo_name))
+                """SELECT "description" FROM folders WHERE "name" = %s AND "repo" = %s AND "model" = %s;""", (subfolder_name, repo_name, MODEL))
             subfolder_row = cur.fetchone()
             if subfolder_row and subfolder_row[0]:
                 descriptions.append(subfolder_row[0])
@@ -237,7 +238,8 @@ def process_folder(folder_path, repo_path, repo_name):
 
 
 def main(repo_name, repo_path):
-    cur.execute("""SELECT "name" FROM repos WHERE name = %s;""", (repo_name,))
+    cur.execute(
+        """SELECT "name" FROM repos WHERE "name" = %s AND "model" = %s;""", (repo_name, MODEL))
     row = cur.fetchone()
     if row:
         print(f"Repository '{repo_name}' already processed. Exiting...")
