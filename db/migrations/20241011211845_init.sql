@@ -11,6 +11,7 @@ create table folders (
     "repo" text,
     "name" text.
     "description" text,
+    "vector" vector(1536),
     primary key ("model", "name", "repo")
 );
 
@@ -21,6 +22,7 @@ create table files (
     "name" text,
     "code" text,
     "description" text,
+    "vector" vector(1536),
     primary key ("model", "name", "folder", "repo")
 );
 
