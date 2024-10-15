@@ -4,7 +4,6 @@ import sys
 import json
 import psycopg2
 from openai import OpenAI
-import replicate
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -15,11 +14,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # OpenAI client
 client = OpenAI(api_key=OPENAI_KEY)
 MODEL = "gpt-4o-mini"
-USE_OPENAI = True
 CONTEXT_WINDOW = 128000
-if not USE_OPENAI:
-    CONTEXT_WINDOW = 8000
-    MODEL = "replicate"
 
 # Establish DB connection
 conn = psycopg2.connect(DATABASE_URL)
@@ -52,14 +47,7 @@ def insert_file(file_name, folder_name, repo_name, file_content, description):
 # Asking functions
 
 
-def ask_replicate(prompt: str) -> str:
-    answer = ""
-    for event in replicate.stream("meta/meta-llama-3-70b-instruct", input={"prompt": prompt, "max_tokens": 4000}):
-        answer += str(event)
-    return answer
-
-
-def ask_openai(prompt: str, type: str = "text") -> str:
+def ask(prompt: str, type: str = "text") -> str:
     chat_completion = client.chat.completions.create(
         messages=[
             {
@@ -68,45 +56,23 @@ def ask_openai(prompt: str, type: str = "text") -> str:
             }
         ],
         model=MODEL,
+        response_format={
+            "type": type,
+        },
     )
     response = chat_completion.choices[0].message.content
     if not response:
         raise Exception("No response from OpenAI")
-    return response
-
-
-def ask(prompt: str, type: str = "text", level=0) -> str:
-    if level > 3:
-        print("Max recursion level reached. Returning empty string.")
-        return "[]"
-    if USE_OPENAI:
-        response = ask_openai(prompt, type)
-    else:
-        response = ask_replicate(prompt)
     if type == 'json_object':
-        try:
-            return json.loads(response)
-        except Exception as e:
-            print(f"Error parsing JSON: {e}")
-            return ask(prompt, type, level + 1)
+        return json.loads(response)
     return response
 
 
 # Summarization prompts
-FILE_PROMPT = """Here is some code. Summarize what the code does.""" + (
-    "" if USE_OPENAI else " Try to keep it under under 400 words.")
-
-FILE_SUMMARIES_PROMPT = """Here are multiple summaries of sections of a file. Summarize what the code does.""" + (
-    "" if USE_OPENAI else " Try to keep it under under 400 words.")
-
-FOLDER_PROMPT = """Here are the summaries of the files and subfolders in this folder. Summarize what the folder does.""" + (
-    "" if USE_OPENAI else " Try to keep it under under 800 words.")
-
-
-FOLDER_SUMMARIES_PROMPT = """Here are multiple summaries of the files and subfolders in this folder. Summarize what the folder does.""" + (
-    "" if USE_OPENAI else " Try to keep it under under 800 words."
-)
-
+FILE_PROMPT = """Here is some code. Summarize what the code does."""
+FILE_SUMMARIES_PROMPT = """Here are multiple summaries of sections of a file. Summarize what the code does."""
+FOLDER_PROMPT = """Here are the summaries of the files and subfolders in this folder. Summarize what the folder does."""
+FOLDER_SUMMARIES_PROMPT = """Here are multiple summaries of the files and subfolders in this folder. Summarize what the folder does."""
 REPO_PROMPT = """Here are the summaries of the folders in this repository. Summarize what the repository does."""
 
 # Processing files and folders
@@ -216,15 +182,14 @@ def process_folder(folder_path, repo_path, repo_name):
     if len(descriptions) == 0:
         return ""
 
-    threshold = 22 if not USE_OPENAI else 300
-    if len(descriptions) < threshold:
+    if len(descriptions) < 300:
         combined_description = ask(
             FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
     else:
         combined_descriptions = []
-        for i in range(0, min(len(descriptions), threshold * threshold), threshold):
+        for i in range(0, min(len(descriptions),  90000), 300):
             combined_description = ask(
-                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+threshold]))
+                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+300]))
             combined_descriptions.append(combined_description)
         combined_description = ask(
             FOLDER_SUMMARIES_PROMPT + "\n\n" + "\n".join(combined_descriptions))
@@ -260,14 +225,13 @@ def main(repo_name, repo_path):
         return
 
     # Combine all folder summaries for the repo summary
-    threshold = 22 if not USE_OPENAI else 300
-    if len(folder_summaries) < threshold:
+    if len(folder_summaries) < 300:
         repo_summary = ask(REPO_PROMPT + "\n\n" + "\n".join(folder_summaries))
     else:
         combined_folder_summaries = []
-        for i in range(0, min(len(folder_summaries), threshold*threshold), threshold):
+        for i in range(0, min(len(folder_summaries), 90000), 300):
             combined_folder_summary = ask(
-                REPO_PROMPT + "\n\n" + "\n".join(folder_summaries[i:i+threshold]))
+                REPO_PROMPT + "\n\n" + "\n".join(folder_summaries[i:i+300]))
             combined_folder_summaries.append(combined_folder_summary)
         repo_summary = ask(
             REPO_PROMPT + "\n\n" + "\n".join(combined_folder_summaries))

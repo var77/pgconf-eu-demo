@@ -15,8 +15,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 client = OpenAI(api_key=OPENAI_KEY)
 MODEL = "gpt-4o-mini"  # You can switch the model if needed
 EMBEDDING_MODEL = "text-embedding-3-small"
-USE_OPENAI = True
-CONTEXT_WINDOW = 128000 if USE_OPENAI else 8000
 
 # Establish DB connection
 conn = psycopg2.connect(DATABASE_URL)
@@ -25,9 +23,9 @@ cur = conn.cursor()
 
 # SQL queries for fetching files and folders based on vector similarity
 FETCH_FILES = """
-    SELECT "name", "folder", "description" 
+    SELECT "name", "code", "folder", "description" 
     FROM files 
-    WHERE repo = %s 
+    WHERE repo = %s AND model = %s
     ORDER BY vector <-> %s
     LIMIT %s
 """
@@ -35,7 +33,7 @@ FETCH_FILES = """
 FETCH_FOLDERS = """
     SELECT "name", "description" 
     FROM folders 
-    WHERE repo = %s 
+    WHERE repo = %s AND model = %s
     ORDER BY vector <-> %s
     LIMIT %s
 """
@@ -69,7 +67,7 @@ def generate_embedding(text: str) -> list:
 
 
 def query_files(repo, question_embedding, top_k=5):
-    cur.execute(FETCH_FILES, (repo, question_embedding, top_k))
+    cur.execute(FETCH_FILES, (repo, MODEL, question_embedding, top_k))
     files = cur.fetchall()
     return files
 
@@ -77,7 +75,7 @@ def query_files(repo, question_embedding, top_k=5):
 
 
 def query_folders(repo, question_embedding, top_k=5):
-    cur.execute(FETCH_FOLDERS, (repo, question_embedding, top_k))
+    cur.execute(FETCH_FOLDERS, (repo, MODEL, question_embedding, top_k))
     folders = cur.fetchall()
     return folders
 
@@ -99,7 +97,7 @@ def get_context(question: str, repo: str) -> str:
         context += f"Folder: {name}\nDescription: {description}\n\n"
 
     for file in files:
-        name, folder_name, description = file
+        name, code, folder_name, description = file
         context += f"File: {name}\nFolder: {folder_name}\nDescription: {description}\n\n"
 
     if not context:
@@ -109,6 +107,7 @@ def get_context(question: str, repo: str) -> str:
     prompt = f"Answer the following question based on the provided context.\n\nQuestion: {question}\n\nContext:\n{context}\n"
 
     # answer = ask(prompt)
+    print(prompt)
     return prompt
 
 # Main entry point of the script
