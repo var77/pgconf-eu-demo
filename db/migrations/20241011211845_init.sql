@@ -28,6 +28,6 @@ create table files (
 
 -- migrate:down
 
-drop table contents;
 drop table files;
 drop table folders;
+drop table repos;
