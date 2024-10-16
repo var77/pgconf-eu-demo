@@ -1,12 +1,10 @@
 -- migrate:up
 create table files (
+    "id" serial primary key,
     "repo" text,
-    "folder" text,
     "name" text,
     "code" text,
-    "description" text,
-    "vector" vector(1536),
-    primary key ("name", "folder", "repo")
+    unique ("name", "repo")
 );
 
 -- migrate:down

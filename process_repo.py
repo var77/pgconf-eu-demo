@@ -21,7 +21,7 @@ conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 # SQL queries
-INSERT_FILE = f"""INSERT INTO files ("name", "code", "repo") VALUES (%s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
+INSERT_FILE = f"""INSERT INTO files ("name", "code", "repo") VALUES (%s, %s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
 
 # Database insert functions
 
@@ -54,10 +54,8 @@ FILE_PROMPT = "Here is some code. Summarize what the code does."
 
 
 def process_file(file_path, repo_name):
-    file_name = os.path.basename(file_path)
-
     cur.execute(
-        """SELECT 1 FROM files WHERE "name" = %s AND "model" = %s AND "repo" = %s;""", (file_name, MODEL, repo_name))
+        """SELECT 1 FROM files WHERE "name" = %s AND "model" = %s AND "repo" = %s;""", (file_path, MODEL, repo_name))
     row = cur.fetchone()
     if row:
         return
@@ -65,7 +63,7 @@ def process_file(file_path, repo_name):
     print(file_path)
     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
         file_content = f.read()
-        insert_file(file_name, file_content, repo_name)
+        insert_file(file_path, file_content, repo_name)
 
 
 valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc', '.h']
