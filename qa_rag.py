@@ -80,6 +80,7 @@ def query_folders(repo, question_embedding, top_k=5):
     return folders
 
 # Main function to handle user questions
+# TODO: I think it should determine whether to query files or folders based on the question
 
 
 def get_context(question: str, repo: str) -> str:
