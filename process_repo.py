@@ -21,14 +21,13 @@ conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 # SQL queries
-INSERT_FILE = f"""INSERT INTO files ("name", "code", "description", "repo") VALUES (%s, %s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
+INSERT_FILE = f"""INSERT INTO files ("name", "code", "repo") VALUES (%s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;"""
 
 # Database insert functions
 
 
-def insert_file(file_name, file_content, description, repo_name):
-    cur.execute(INSERT_FILE, (file_name, file_content,
-                description.strip(), repo_name))
+def insert_file(file_name, file_content, repo_name):
+    cur.execute(INSERT_FILE, (file_name, file_content, repo_name))
     conn.commit()
 
 # Asking functions
@@ -58,19 +57,15 @@ def process_file(file_path, repo_name):
     file_name = os.path.basename(file_path)
 
     cur.execute(
-        """SELECT "description" FROM files WHERE "name" = %s AND "model" = %s AND "repo" = %s;""", (file_name, MODEL, repo_name))
+        """SELECT 1 FROM files WHERE "name" = %s AND "model" = %s AND "repo" = %s;""", (file_name, MODEL, repo_name))
     row = cur.fetchone()
     if row:
-        return row[0]
+        return
 
     print(file_path)
     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
         file_content = f.read()
-        description = ask(FILE_PROMPT + "\n\nFile: " +
-                          file_name + "\n\n" + file_content)
-        insert_file(file_name, file_content, description, repo_name)
-
-        return description
+        insert_file(file_name, file_content, repo_name)
 
 
 valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc', '.h']
