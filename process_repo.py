@@ -149,7 +149,7 @@ def process_file(file_path, folder_name, repo_name):
         return description
 
 
-valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc', '.h']
+valid_endings = ['.rb', '.c', '.cpp', '.rs', '.cc', '.h', '.py']
 
 
 def process_folder(folder_path, repo_path, repo_name):
