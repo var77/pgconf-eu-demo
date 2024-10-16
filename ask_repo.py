@@ -30,14 +30,6 @@ FETCH_FILES = """
     LIMIT %s
 """
 
-FETCH_FOLDERS = """
-    SELECT "name", "description" 
-    FROM folders 
-    WHERE repo = %s AND model = %s
-    ORDER BY vector <-> %s
-    LIMIT %s
-"""
-
 
 def ask(prompt: str) -> str:
     chat_completion = client.chat.completions.create(
@@ -71,50 +63,37 @@ def query_files(repo, question_embedding, top_k=5):
     files = cur.fetchall()
     return files
 
-# Function to query folders based on vector similarity
-
-
-def query_folders(repo, question_embedding, top_k=5):
-    cur.execute(FETCH_FOLDERS, (repo, MODEL, question_embedding, top_k))
-    folders = cur.fetchall()
-    return folders
 
 # Main function to handle user questions
 
 
-def get_context(question: str, repo: str) -> str:
+def main(repo: str, question: str) -> str:
+    print("QUESTION")
+    print(question)
+
     # Generate embedding for the question
     question_embedding = generate_embedding(question)
 
-    # Query files and folders based on vector similarity
+    # Query files based on vector similarity
     files = query_files(repo, question_embedding)
-    folders = query_folders(repo, question_embedding)
 
     # Build context from the query results
-    context = ""
-    for folder in folders:
-        name, description = folder
-        context += f"Folder: {name}\nDescription: {description}\n\n"
-
+    print("\RELEVANT FILES")
     for file in files:
         name, code, folder_name, description = file
+        print('-', name)
         context += f"File: {name}\nFolder: {folder_name}\nDescription: {description}\n\n"
-
     if not context:
         return "No relevant information found to answer your question."
 
     # Build prompt for the OpenAI API
     prompt = f"Answer the following question based on the provided context.\n\nQuestion: {question}\n\nContext:\n{context}\n"
-
-    # answer = ask(prompt)
+    print("\nPROMPT")
     print(prompt)
-    return prompt
 
-# Main entry point of the script
-
-
-def main(repo, question):
-    get_context(question.strip(), repo)
+    answer = ask(prompt)
+    print("\nANSWER")
+    print(answer)
 
 
 if __name__ == '__main__':
