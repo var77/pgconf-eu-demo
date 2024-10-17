@@ -1,0 +1,2386 @@
+COMMIT_HASH:76212ab9ae9eba676539fa827a59745ca8a9a6d2|AUTHOR_NAME:Di Qi|AUTHOR_EMAIL:di@lantern.dev|DATE:2024-10-10 11:04:01 -0700|TITLE:Add comments, run tests, add dependencies (#3)|MESSAGE:
+diff --git a/Dockerfile.dev b/Dockerfile.dev
+index 499c80c..4201c01 100644
+--- a/Dockerfile.dev
++++ b/Dockerfile.dev
+@@ -42,6 +42,11 @@ ENV LIBCLANG_LIBRARY_FILE=/usr/lib/llvm-17/lib/libclang.so.17
+ ENV PGDATA=/var/lib/postgresql/data
+ RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql
+ 
++# Give the postgres user permission to access the PostgreSQL data directory
++RUN chown postgres:postgres /usr/share/postgresql/16/extension && \
++    chown postgres:postgres /usr/lib/postgresql/16/lib/ && \
++    chown postgres:postgres /usr/lib/postgresql/16/lib/bitcode/
++
+ # Switch to the postgres user
+ RUN apt update && apt install -y curl
+ USER postgres
+diff --git a/src/openai_hack/__init__.py b/src/openai_hack/__init__.py
+index abd96df..bab7c25 100644
+--- a/src/openai_hack/__init__.py
++++ b/src/openai_hack/__init__.py
+@@ -6,7 +6,6 @@ import pickle
+ import shutil
+ import subprocess
+ from typing import List, Optional
+-
+ import click
+ from coloredlogs import ColoredFormatter
+ from dotenv import load_dotenv
+@@ -14,7 +13,7 @@ from openai import OpenAI
+ from pydantic import BaseModel, Field
+ from termcolor import colored
+ 
+-# Configure logging
++# region Logging
+ formatter = ColoredFormatter(
+     "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+     datefmt="%Y-%m-%d %H:%M:%S",
+@@ -33,11 +32,9 @@ handler.setFormatter(formatter)
+ logger = logging.getLogger(__name__)
+ logger.addHandler(handler)
+ logger.setLevel(logging.DEBUG)
++# endregion
+ 
+-load_dotenv()
+-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+-
+-
++# region Models
+ class File(BaseModel):
+     fileName: str
+     content: str
+@@ -46,35 +43,33 @@ class File(BaseModel):
+         default="644", description="Optional file permissions, if needed (e.g., '755')."
+     )
+ 
+-
+ class Instructions(BaseModel):
+     buildCommands: List[str]
+     runCommands: List[str]
+     testCommands: List[str]
+ 
+-
+ class TaskFileGroup(BaseModel):
+     overallDescription: str
+     commitMessage: str
+     files: List[File]
+     instructions: Instructions
+ 
+-
+-class BuildResult(BaseModel):
++class CommandsResult(BaseModel):
+     success: bool
+     message: Optional[str] = None
++# endregion
+ 
+-
+-client = OpenAI(
+-    api_key=OPENAI_KEY  # os.environ.get("OPENAI_API_KEY"),
+-)
+-
+-
++# region Open AI
++load_dotenv()
++OPENAI_KEY = os.getenv("OPENAI_API_KEY")
++client = OpenAI(api_key=OPENAI_KEY)
+ MODEL = "o1-preview-2024-09-12"
+ # MODEL = "o1-mini-2024-09-12"
+ # MODEL = "gpt-4o-2024-08-06"
+ # MODEL = "gpt-4o-mini"
++# endregion
+ 
++# region Artifact
+ ARTIFACT_FOLDER = "./artifact"
+ HISTORY_PICKLE_FILE = "openai_history.pkl"
+ OPENAI_HISTORY = {}
+@@ -130,20 +125,26 @@ class Artifact:
+                 f.write(file.content)
+             os.chmod(file_path, int(file.permissions, 8))
+ 
+-    def run_instructions(self, instructions: Instructions) -> BuildResult:
++    def run_commands(self, commands: List[str]) -> CommandsResult:
+         with contextlib.chdir(ARTIFACT_FOLDER):
+-            for command in instructions.buildCommands:
+-                logger.debug("\t\tRunning make command: %s", command)
++            for command in commands:
++                logger.debug("\t\tRunning command: %s", command)
+ 
+                 result = subprocess.run(
+                     command, shell=True, check=False, capture_output=True, text=True
+                 )
+ 
+                 if result.returncode != 0:
+-                    return BuildResult(success=False, message=result.stderr)
++                    return CommandsResult(success=False, message=result.stderr)
+ 
+-            return BuildResult(success=True)
++            return CommandsResult(success=True)
+ 
++    def run_build(self, instructions: Instructions) -> CommandsResult:
++        return self.run_commands(instructions.buildCommands)
++
++    def run_tests(self, instructions: Instructions) -> CommandsResult:
++        return self.run_commands(instructions.testCommands)
++# endregion
+ 
+ OUTPUT_JSON_SCHEMA = {
+     "$schema": "http://json-schema.org/draft-07/schema#",
+@@ -212,7 +213,6 @@ OUTPUT_JSON_SCHEMA = {
+     "required": ["commitMessage", "overallDescription", "files", "instructions"],
+ }
+ 
+-
+ def get_openai_response(prompt: str, mock=False) -> str:
+     if mock:
+         try:
+@@ -242,14 +242,59 @@ def get_openai_response(prompt: str, mock=False) -> str:
+ 
+     return response
+ 
++# region Easy Prompt
++EASY_TASK_HELLO_WORLD_EXTENSION = f"""
++# Summary
++Write a Postgres extension using C that prints hello world and prints the version of the running Postgres server.
++Make sure the extension follows Postgres extension development guidelines and has the necessary file structure and layout.
++You are responsible for creating all the necessary files for building the extension and for generating necessary build instructions.
++Include tests and run the tests as part of the build instructions.
++
++# Output Instructions:
++Output the result as JSON. DO NOT output ```json surrounding marks in the JSON. The produced output must be directly parsable by JSON.loads in python.
++Output the answer as a JSON. 
++Use the following JSON Schema spec for outputing the data in the correct schema.
++DO NOT reproduce the JSON Schema below in the result but output JSON that is compliant with this spec.
++
++{OUTPUT_JSON_SCHEMA}
++"""
++# endregion
++
++# region Medium Prompt
++
++MEDIUM_TASK_MEDIAN_EXTENSION = f"""
++# Summary
++In this task, you will create a custom PostgreSQL extension that implements a median aggregate function in C.
++This function will calculate the median of a set of numeric values when applied in an aggregate query, similar to how AVG() works.
++This task will require multiple components, including handling PostgreSQL's custom types, memory management, and working with the Postgres
++aggregate function system.
++
++# Guidelines
++Use multiple files if it would improve the organization of your code.
++Make sure the extension follows Postgres extension development guidelines and has the necessary file structure and layout.
++You are responsible for creating all the necessary files for building the extension and for generating necessary build instructions.
++Include tests. The tests should validate that the code performs the action correctly. Just validating that the code compiles and can run is not enough.
++Generally, an sql/ directory and an expected/ directory would be a good test structure.
++
++# Output instructions
++Output the result as JSON. DO NOT output ```json surrounding marks in the JSON. The produced output must be directly parsable by JSON.loads in python.
++Output the answer as a JSON. 
++Use the following JSON Schema spec for outputing the data in the correct schema.
++DO NOT reproduce the JSON Schema below in the result but output JSON that is compliant with this spec.
++
++{OUTPUT_JSON_SCHEMA}
++"""
++
++# endregion
+ 
++# region Hard Prompt
+ HARD_TASK_PROMPT_CUSTOM_SCAN = f"""
+ ## Summary
+-    Imlement an example postgres extension that uses Postgre Custom Scan API to implement custom scan of a relation.
++    Implement an example Postgres extension that uses Postgres Custom Scan API to implement custom scan of a relation.
+     is it possible to use the Custom Scan API[1] to change the set of base relations that a query will be scanning? 
+ 
+ ## Task
+-It seems the postgres core code extends the set of base relations used in case of partitioned and inherited relations[2] but my use-case does not fit in either.
++It seems the Postgres core code extends the set of base relations used in case of partitioned and inherited relations[2] but my use-case does not fit in either.
+ 
+ As a simple self-contained starting point, I want to intercept query like SELECT * FROM table1 WHERE condition() and use a plan that scans both table1 and an auxiliary table2 that has no relationship with table1.
+ 
+@@ -270,55 +315,40 @@ Use the following Json Schema spec for outputing the data in the correct schema.
+ 
+ {OUTPUT_JSON_SCHEMA}
+ """
++# endregion
+ 
+ 
+-EASY_TASK_HELLO_WORLD_EXTENSION = f"""
+-
+-## Summary
+-Write a postgres extension that prints hellow world and prints the version of the running postgres server.
+-Use C to write the extension.
+-
+-## Task
+-
+-Write a C extension for postgres. Make sure the extension follows postgres extension development guidelines and has the necessary
+-file straucture and layout. UYou are responsivle for creating all thenecessary files for building the extension and 
+-for generating necessary build instructions
+-
+-
+-## Test
+-
+-Make sure to write tests and run the tests as part of the build instructions
+-
+-## Output Instructions:
+-Output the result as JSON. DO NOT output ```json surrounding marks in the json. The produced output must be directly parsable by json.loads in python. Output the answer as a json. 
+-Use the following Json Schema spec for outputing the data in the correct schema. DO NOT reproduce the Json Schema below in the result but output json that is compliant with this spec
+-
+-
+-{OUTPUT_JSON_SCHEMA}
+-
+-"""
+-
++TASKS = {
++    "easy": EASY_TASK_HELLO_WORLD_EXTENSION,
++    "medium": MEDIUM_TASK_MEDIAN_EXTENSION,
++    "hard": HARD_TASK_PROMPT_CUSTOM_SCAN,
++}
+ 
+ @click.command()
++@click.option(
++    "--task", type=click.Choice(TASKS.keys()), default="medium", help="Task to perform."
++)
+ @click.option(
+     "--mock", is_flag=True, help="Use mock response instead of calling OpenAI API."
+ )
+ @click.option(
+     "--overwrite", is_flag=True, help="Overwrite the current project if it exists."
+ )
+-def cli(mock, overwrite):
++def cli(task, mock, overwrite):
+     global OPENAI_HISTORY
++
+     try:
+-        old_history = pickle.load(open(HISTORY_PICKLE_FILE, "rb"))
++        try:
++            old_history = pickle.load(open(HISTORY_PICKLE_FILE, "rb"))
++        except FileNotFoundError:
++            old_history = None
+         if old_history:
+             OPENAI_HISTORY = old_history
+ 
+-        prompt = EASY_TASK_HELLO_WORLD_EXTENSION
+-        prompt = HARD_TASK_PROMPT_CUSTOM_SCAN
+-
+-        next_prompt = prompt
++        next_prompt = TASKS[task]
+ 
+-        logger.info("Starging new project...")
++        # region Start new project
++        logger.info("Starting new project...")
+         artifact = Artifact("postgres_extension", overwrite=overwrite)
+         artifact.create_file(
+             File(
+@@ -328,15 +358,16 @@ def cli(mock, overwrite):
+             )
+         )
+         artifact.commit("Initial commit")
++        # endregion
+ 
+         for iter in range(100):
+             logger.info("Iteration: %s", iter)
+-            artifact.clear()
+ 
+             logger.info(f"\tPresenting the task to {MODEL}")
+             output = get_openai_response(next_prompt, mock=mock)
++            artifact.clear()
+ 
+-            # try:
++            # region Sanity check JSON schema
+             logger.info(f"\tParsing the expected response output")
+             try:
+                 parsed_output = json.loads(output)
+@@ -347,19 +378,20 @@ def cli(mock, overwrite):
+                 the generated output {output} did not follow the required JSON schema spec {OUTPUT_JSON_SCHEMA}
+                 """
+                 continue
++            # endregion
+ 
++            # region Create files
+             logger.info(f"\tCreating files per model instructions")
+             for file in typed_output.files:
+                 artifact.create_file(file)
+-
+             artifact.commit(f"Iteration: {iter} {typed_output.commitMessage}")
++            # endregion
+ 
++            # region Build
+             logger.info(f"\tBuilding per model instructions")
+-            build_result = artifact.run_instructions(typed_output.instructions)
+-            if build_result.success:
+-                logger.info("Build successful.")
+-                break
+-            else:
++            build_result = artifact.run_build(typed_output.instructions)
++            if not build_result.success:
++                logger.error("Build failed: %s", build_result.message)
+                 next_prompt += f"""
+ ## Proposed solution by {MODEL} at iteration {iter}
+                     {output}
+@@ -370,7 +402,28 @@ failure message: {build_result.message}
+ Output a solution that can be built successfully.
+                 """
+                 continue
++            logger.info("Build successful.")
++            # endregion
++
++            # region Test
++            logger.info(f"\tTesting per model instructions")
++            test_result = artifact.run_tests(typed_output.instructions)
++            if test_result.success:
++                logger.info("Tests successful.")
++                break
++            else:
++                logger.error("Tests failed: %s", test_result.message)
++                next_prompt += f"""
++## Proposed solution by {MODEL} at iteration {iter}
++                    {output}
+ 
++## Result: Build success, test failure
++failure message: {test_result.message}
++
++Output a solution that can pass tests successfully.
++"""
++                continue
++            # endregion
+     except Exception as e:
+         print(f"An error occurred: {e}")
+     finally:
+
+COMMIT_HASH:8d8069e5ac2a84398d0021280e804be38cc753e4|AUTHOR_NAME:Narek Galstyan|AUTHOR_EMAIL:narekg@berkeley.edu|DATE:2024-10-09 17:09:30 -0700|TITLE:Narek (#2)|MESSAGE:* Change workdir and install rye
+
+* Move COPY to lower in docker file to improve build caching
+
+* Fix rye setup
+
+* Format imports
+
+* Add install server headers for compiling extensions
+diff --git a/Dockerfile.dev b/Dockerfile.dev
+index 10e8210..499c80c 100644
+--- a/Dockerfile.dev
++++ b/Dockerfile.dev
+@@ -22,6 +22,7 @@ RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-
+ # Install PostgreSQL 16
+ RUN apt-get update && \
+     DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-16 postgresql-client-16 && \
++    apt-get install -y postgresql-server-dev-16 && \
+     rm -rf /var/lib/apt/lists/*
+ 
+ # Set Python3 as the default python
+@@ -30,9 +31,6 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
+ # Set working directory
+ WORKDIR /app
+ 
+-# Copy the current directory contents into the container at /app
+-COPY . /app
+-
+ # Install the Python dependencies
+ RUN pip install clang
+ 
+@@ -45,13 +43,23 @@ ENV PGDATA=/var/lib/postgresql/data
+ RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql
+ 
+ # Switch to the postgres user
++RUN apt update && apt install -y curl
+ USER postgres
+ 
+ # Initialize the PostgreSQL database
+ RUN /usr/lib/postgresql/16/bin/initdb -D /var/lib/postgresql/data
+ 
++RUN curl -sSf https://rye.astral.sh/get | RYE_INSTALL_OPTION="--yes" bash
++RUN echo 'source "$HOME/.rye/env"' >> ~/.bashrc
++
+ # Expose the PostgreSQL port
+ EXPOSE 5432
+ 
++WORKDIR /openai_hack
++
++# Copy the current directory contents into the container at /app
++# do this last to get container build caching
++COPY . /app
++
+ # Start PostgreSQL and open bash
+ CMD ["/usr/lib/postgresql/16/bin/postgres", "-D", "/var/lib/postgresql/data"]
+diff --git a/src/openai_hack/__init__.py b/src/openai_hack/__init__.py
+index f0847a5..abd96df 100644
+--- a/src/openai_hack/__init__.py
++++ b/src/openai_hack/__init__.py
+@@ -1,10 +1,10 @@
++import contextlib
+ import json
+ import logging
+ import os
+ import pickle
+ import shutil
+ import subprocess
+-import contextlib
+ from typing import List, Optional
+ 
+ import click
+
+COMMIT_HASH:8eaa1c03704e5d80149960bea81a914e8fb8d46e|AUTHOR_NAME:Di Qi|AUTHOR_EMAIL:di@lantern.dev|DATE:2024-10-09 16:27:26 -0700|TITLE:Merge pull request #1 from lanterndata/di/add-utilities|MESSAGE:Add utility functions for changing code
+COMMIT_HASH:23ab640ac0f8a5d6f472be2c8b6e198d9e3b3989|AUTHOR_NAME:Narek Galstyan|AUTHOR_EMAIL:narekg@berkeley.edu|DATE:2024-10-09 16:26:59 -0700|TITLE:Add git commit message on iterations|MESSAGE:
+diff --git a/src/openai_hack/__init__.py b/src/openai_hack/__init__.py
+index cfe9300..f0847a5 100644
+--- a/src/openai_hack/__init__.py
++++ b/src/openai_hack/__init__.py
+@@ -1,18 +1,18 @@
+-from openai import OpenAI
+-import os
+ import json
+-from dotenv import load_dotenv
+-from termcolor import colored
++import logging
++import os
++import pickle
+ import shutil
+ import subprocess
+-import click
+-import pickle
+-
+-
++import contextlib
+ from typing import List, Optional
+-from pydantic import BaseModel, Field
+-import logging
++
++import click
+ from coloredlogs import ColoredFormatter
++from dotenv import load_dotenv
++from openai import OpenAI
++from pydantic import BaseModel, Field
++from termcolor import colored
+ 
+ # Configure logging
+ formatter = ColoredFormatter(
+@@ -55,6 +55,7 @@ class Instructions(BaseModel):
+ 
+ class TaskFileGroup(BaseModel):
+     overallDescription: str
++    commitMessage: str
+     files: List[File]
+     instructions: Instructions
+ 
+@@ -72,6 +73,7 @@ client = OpenAI(
+ MODEL = "o1-preview-2024-09-12"
+ # MODEL = "o1-mini-2024-09-12"
+ # MODEL = "gpt-4o-2024-08-06"
++# MODEL = "gpt-4o-mini"
+ 
+ ARTIFACT_FOLDER = "./artifact"
+ HISTORY_PICKLE_FILE = "openai_history.pkl"
+@@ -81,26 +83,41 @@ OPENAI_HISTORY = {}
+ class Artifact:
+     def __init__(self, name: str, overwrite=False):
+         self.name = name
++        self.basedir = os.getcwd()
+         if overwrite:
+             self.reset()
+-
+-        self._make_root_dir()
++        else:
++            self._make_root_dir()
+ 
+     def _make_root_dir(self):
+         if not os.path.exists(ARTIFACT_FOLDER):
+             os.mkdir(ARTIFACT_FOLDER)
+-        os.chdir(ARTIFACT_FOLDER)
+-        if not os.path.exists(".git"):
+-            os.system("git init -b main")
+-        os.chdir("..")
++        with contextlib.chdir(ARTIFACT_FOLDER):
++            if not os.path.exists(".git"):
++                os.system("git init -b main")
++                os.system("git config --local user.name 'GPT-o1'")
++                os.system("git config --local user.email 'o1@home'")
++                # add git local configfor name and email address
+ 
+     def reset(self):
+         if os.path.exists(ARTIFACT_FOLDER):
+             shutil.rmtree(ARTIFACT_FOLDER)
+         self._make_root_dir()
+ 
++    def commit(self, msg):
++        """
++        commit all changes to the created git repo and start a new iteration
++        """
++        with contextlib.chdir(ARTIFACT_FOLDER):
++            os.system(f"git add .")
++            os.system(f"git commit -m '{msg}'")
++
++    def clear(self):
++        with contextlib.chdir(os.path.join(self.basedir, ARTIFACT_FOLDER)):
++            os.system("rm -rf *")
++
+     def create_file(self, file: File):
+-        file_path = os.path.join(ARTIFACT_FOLDER, file.fileName)
++        file_path = os.path.join(self.basedir, ARTIFACT_FOLDER, file.fileName)
+         os.makedirs(os.path.dirname(file_path), exist_ok=True)
+         if os.path.exists(file_path):
+             with open(file_path, "r") as f:
+@@ -114,18 +131,18 @@ class Artifact:
+             os.chmod(file_path, int(file.permissions, 8))
+ 
+     def run_instructions(self, instructions: Instructions) -> BuildResult:
+-        os.chdir(ARTIFACT_FOLDER)
+-        for command in instructions.buildCommands:
+-            logger.debug("\t\tRunning make command: %s", command)
++        with contextlib.chdir(ARTIFACT_FOLDER):
++            for command in instructions.buildCommands:
++                logger.debug("\t\tRunning make command: %s", command)
+ 
+-            result = subprocess.run(
+-                command, shell=True, check=False, capture_output=True, text=True
+-            )
++                result = subprocess.run(
++                    command, shell=True, check=False, capture_output=True, text=True
++                )
+ 
+-            if result.returncode != 0:
+-                return BuildResult(success=False, message=result.stderr)
++                if result.returncode != 0:
++                    return BuildResult(success=False, message=result.stderr)
+ 
+-        return BuildResult(success=True)
++            return BuildResult(success=True)
+ 
+ 
+ OUTPUT_JSON_SCHEMA = {
+@@ -134,6 +151,10 @@ OUTPUT_JSON_SCHEMA = {
+     "description": "Schema for a group of files required to accomplish a task with build, run, and test instructions.",
+     "type": "object",
+     "properties": {
++        "commitMessage": {
++            "type": "string",
++            "description": "A short description of changes in the lsit of current output files. If this is not the first iteration outputing contents of a list of files, make sure the message is about the changes in the most recent iteration and not about the whole project. That is - unlike overallDescription, commitMessage field should be specific to current diff and not the whole project",
++        },
+         "overallDescription": {
+             "type": "string",
+             "description": "A high-level description of what the group of files accomplishes.",
+@@ -188,7 +209,7 @@ OUTPUT_JSON_SCHEMA = {
+             "required": ["buildCommands", "runCommands", "testCommands"],
+         },
+     },
+-    "required": ["overallDescription", "files", "instructions"],
++    "required": ["commitMessage", "overallDescription", "files", "instructions"],
+ }
+ 
+ 
+@@ -293,12 +314,24 @@ def cli(mock, overwrite):
+             OPENAI_HISTORY = old_history
+ 
+         prompt = EASY_TASK_HELLO_WORLD_EXTENSION
++        prompt = HARD_TASK_PROMPT_CUSTOM_SCAN
+ 
+         next_prompt = prompt
+ 
+         logger.info("Starging new project...")
++        artifact = Artifact("postgres_extension", overwrite=overwrite)
++        artifact.create_file(
++            File(
++                fileName="README.md",
++                content="## Postgres Extension",
++                description="Readme file",
++            )
++        )
++        artifact.commit("Initial commit")
++
+         for iter in range(100):
+             logger.info("Iteration: %s", iter)
++            artifact.clear()
+ 
+             logger.info(f"\tPresenting the task to {MODEL}")
+             output = get_openai_response(next_prompt, mock=mock)
+@@ -315,12 +348,12 @@ def cli(mock, overwrite):
+                 """
+                 continue
+ 
+-            artifact = Artifact("postgres_extension", overwrite=overwrite)
+-
+             logger.info(f"\tCreating files per model instructions")
+             for file in typed_output.files:
+                 artifact.create_file(file)
+ 
++            artifact.commit(f"Iteration: {iter} {typed_output.commitMessage}")
++
+             logger.info(f"\tBuilding per model instructions")
+             build_result = artifact.run_instructions(typed_output.instructions)
+             if build_result.success:
+
+COMMIT_HASH:53379b7dcbaf83a423e17202e03d7c2e5e12773f|AUTHOR_NAME:Di Qi|AUTHOR_EMAIL:di@lantern.dev|DATE:2024-10-09 16:26:58 -0700|TITLE:Add utility functions for changing code|MESSAGE:
+diff --git a/.devcontainer/devcontainer.json b/.devcontainer/devcontainer.json
+new file mode 100644
+index 0000000..944a995
+--- /dev/null
++++ b/.devcontainer/devcontainer.json
+@@ -0,0 +1,24 @@
++{
++	"name": "openai-hack",
++	"build": {
++	  "dockerfile": "../Dockerfile.dev",
++	  "context": ".."
++	},
++	"overrideCommand": false,  // This ensures the CMD in Dockerfile is used
++	"runArgs": [
++	  "--cap-add=SYS_PTRACE",
++	  "-p", "5555:5432"
++	],
++	"mounts": [
++	  "source=${localWorkspaceFolder},target=/openai_hack,type=bind,consistency=cached"
++	],
++	"workspaceFolder": "/openai_hack",
++	"customizations": {
++	  "vscode": {
++		"extensions": [
++		  "GitHub.copilot"
++		]
++	  }
++	}
++  }
++  
+\ No newline at end of file
+diff --git a/Dockerfile.dev b/Dockerfile.dev
+index d77e97c..10e8210 100644
+--- a/Dockerfile.dev
++++ b/Dockerfile.dev
+@@ -1,79 +1,57 @@
+-ARG VERSION=15
+-ARG PGVECTOR_VERSION=0.5.1
+-  #fix pg_cron at the latest commit of the time
+-ARG PG_CRON_COMMIT_SHA=7e91e72b1bebc5869bb900d9253cc9e92518b33f
++# Use a more recent Ubuntu image as the base
++FROM ubuntu:22.04
+ 
+-# If you want to build the base image for different versions use Dockerfile.pg
+-# To use GDB inside container run docker like this:
+-# docker build . -t lantern-dev
+-# docker run --cap-add=SYS_PTRACE -p 5433:5432 -d --name lantern-dev lantern-dev
+-# Then exec to it docker exec -ti -u root lantern-dev bash
+-# gdb -p $pid_of_pg_backend
++# Install Python, Gi
++RUN apt-get update && \
++    apt-get install -y python3 python3-pip git wget && \
++    rm -rf /var/lib/apt/lists/*
+ 
+-FROM varik77/postgres:$VERSION-debug
+-ARG PGVECTOR_VERSION
+-ARG PG_CRON_COMMIT_SHA
++# Install wget, Clang, Clang-format, and LLVM
++RUN apt-get update && \
++    apt-get -y install lsb-release software-properties-common gnupg && \
++    wget https://apt.llvm.org/llvm.sh && \
++    chmod u+x llvm.sh && \
++    ./llvm.sh 17 && \
++    apt-get install -y clang-17 libclang-17-dev clang-format && \
++    rm ./llvm.sh
+ 
+-WORKDIR /lantern
++# Add PostgreSQL APT repository and import the GPG key
++RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
++    wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+ 
+-USER root
+-ENV DEBIAN_FRONTEND=noninteractive
+-RUN apt update && apt install -y curl lcov libpq5
+-RUN apt update && apt install -y clang-15 gcc-12 g++-12
++# Install PostgreSQL 16
++RUN apt-get update && \
++    DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-16 postgresql-client-16 && \
++    rm -rf /var/lib/apt/lists/*
+ 
+-# install ruby
+-RUN apt update && apt install -y ruby-full
+-RUN gem install bundler
+-# need to install pg here to specify libpq location
+-# it cannot be found by default since we installed pg from source
+-RUN gem install pg -- --with-pg-include=/usr/local/pgsql/include/ --with-pg-lib=/usr/local/pgsql/lib/
++# Set Python3 as the default python
++RUN ln -s /usr/bin/python3 /usr/bin/python
+ 
+-# hack to make sure postgres user has write access to externally mounted volumes
+-RUN mkdir /lantern_shared && chown postgres:postgres /lantern_shared
++# Set working directory
++WORKDIR /app
+ 
+-RUN cd /root/postgresql-15.5/contrib && make install -j
++# Copy the current directory contents into the container at /app
++COPY . /app
+ 
+-# allow non-root users to install in the container to make it easier to run update-tests
+-RUN chmod -R 777 /usr/local/pgsql/lib/ /usr/local/pgsql/share/extension/ /usr/local/pgsql/include/server/
+-RUN mkdir -p /var/lib/postgresql/data && chown postgres:postgres /var/lib/postgresql/data
+-USER postgres
+-
+-RUN pip install GitPython libtmux
+-
+-# Build & Install pgvector
+-RUN wget --quiet -O pgvector.tar.gz https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz && \
+-    tar xzf pgvector.tar.gz && \
+-    (cd pgvector-${PGVECTOR_VERSION} && make -j && make install)
+-
+-# build & Install pg_cron
+-RUN  git clone https://github.com/citusdata/pg_cron.git && \
+-    (cd pg_cron && git checkout ${PG_CRON_COMMIT_SHA} && make -j && make install)
++# Install the Python dependencies
++RUN pip install clang
+ 
++# Set environment variables to locate libclang
++ENV LD_LIBRARY_PATH=/usr/lib/llvm-17/lib
++ENV LIBCLANG_LIBRARY_FILE=/usr/lib/llvm-17/lib/libclang.so.17
+ 
+-# install rust
+-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+-# RUN cargo install --locked cargo-pgrx --version=0.11.3 && cargo pgrx init --pg15=`which pg_config`
++# Set up PostgreSQL environment variables
++ENV PGDATA=/var/lib/postgresql/data
++RUN mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql
+ 
+-# Install perf
+-# RUN sudo apt update && sudo apt install -y linux-tools-common linux-tools-generic linux-tools-`uname -r`
+-# in host, enable perf_event paranoid via
+-# echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+-
+-ENV DATABASE_URL=postgres://postgres@localhost:5432/postgres
+-ENV LANTERN_DATABASE_URL=postgres://postgres@localhost:5432/postgres
+-
+-# Uncomment the following to change the data directory of the running postgres
+-# RUN /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data
+-# RUN echo "listen_addresses '*' " >> /var/lib/postgresql/data/postgresql.conf
+-RUN /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data
+-RUN echo "shared_preload_libraries = 'pg_cron,pg_stat_statements' " >> /var/lib/postgresql/data/postgresql.conf && \
+-    echo "wal_level = 'logical' " >> /var/lib/postgresql/data/postgresql.conf && \
+-    echo "listen_addresses = '*' " >> /var/lib/postgresql/data/postgresql.conf && \
+-    echo "shared_buffers = '4GB' " >> /var/lib/postgresql/data/postgresql.conf
++# Switch to the postgres user
++USER postgres
+ 
+-RUN echo "host    all             all             0.0.0.0/0               trust" >> /var/lib/postgresql/data/pg_hba.conf
++# Initialize the PostgreSQL database
++RUN /usr/lib/postgresql/16/bin/initdb -D /var/lib/postgresql/data
+ 
+-COPY . .
++# Expose the PostgreSQL port
++EXPOSE 5432
+ 
+-# CMD ["/usr/local/pgsql/bin/postgres", "-D", "/var/lib/postgresql/data"]
+-CMD ["/usr/local/pgsql/bin/postgres", "-D", "/var/lib/postgresql/data"]
++# Start PostgreSQL and open bash
++CMD ["/usr/lib/postgresql/16/bin/postgres", "-D", "/var/lib/postgresql/data"]
+diff --git a/src/utilities.py b/src/utilities.py
+new file mode 100644
+index 0000000..f0b0a8d
+--- /dev/null
++++ b/src/utilities.py
+@@ -0,0 +1,925 @@
++import os
++import clang.cindex
++from datetime import datetime
++
++# region Helper functions
++
++index = clang.cindex.Index.create()
++
++
++def parse_file(file_path):
++    """
++    Parse the input C file
++    """
++    args = ['-x', 'c', '-std=c11']
++    tu = index.parse(file_path, args=args,
++                     options=clang.cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
++    return tu
++
++
++def find_function(node, func_name):
++    """
++    Traverse the AST to find the function called 'func_name'
++    """
++    if node.kind == clang.cindex.CursorKind.FUNCTION_DECL and node.spelling == func_name:
++        return node
++    for child in node.get_children():
++        result = find_function(child, func_name)
++        if result:
++            return result
++    return None
++
++
++def find_struct(node, struct_name):
++    """
++    Traverse the AST to find the struct called 'struct_name'
++    """
++    if node.kind == clang.cindex.CursorKind.STRUCT_DECL and node.spelling == struct_name:
++        return node
++    for child in node.get_children():
++        result = find_struct(child, struct_name)
++        if result:
++            return result
++    return None
++
++
++def find_variable(node, variable_name):
++    """
++    Traverse the AST to find the variable called 'variable_name'
++    """
++    if node.kind == clang.cindex.CursorKind.VAR_DECL and node.spelling == variable_name:
++        return node
++    for child in node.get_children():
++        result = find_variable(child, variable_name)
++        if result:
++            return result
++    return None
++
++
++def find_import(node, import_name):
++    """
++    Traverse the AST to find the import called 'import_name'
++    """
++    if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
++        included_file = node.displayname.strip('<>"')
++        normalized_import_name = import_name.strip('<>"')
++        if included_file == normalized_import_name:
++            return node
++    for child in node.get_children():
++        result = find_import(child, import_name)
++        if result:
++            return result
++    return None
++
++
++def replace_function_body(function_node, new_code):
++    """
++    Replace the function body with new content
++    """
++    # Find the function body cursor (compound statement)
++    for child in function_node.get_children():
++        if child.kind == clang.cindex.CursorKind.COMPOUND_STMT:
++            body_cursor = child
++            break
++    else:
++        print("Function body not found")
++        return None
++
++    # Get the source range of the function body
++    start = body_cursor.extent.start
++    end = body_cursor.extent.end
++
++    # Store the replacement information (positions and new code)
++    replacement_info = {
++        'start': start,
++        'end': end,
++        'new_code': new_code
++    }
++
++    return replacement_info
++
++
++def write_modified_code(replacement_info, file_path):
++    """
++    Write the modified C file to disk
++    """
++    start = replacement_info['start']
++    end = replacement_info['end']
++    new_code = replacement_info['new_code']
++
++    start_file = start.file
++    start_line = start.line
++    start_column = start.column
++
++    end_file = end.file
++    end_line = end.line
++    end_column = end.column
++
++    if start_file.name != file_path or end_file.name != file_path:
++        print("Replacement positions are not in the expected file")
++        return
++
++    # Read the original file content
++    with open(file_path, 'r') as f:
++        content = f.read()
++
++    # Split the content into lines
++    lines = content.splitlines(keepends=True)  # Keep line endings
++
++    # Compute the character offsets
++    def get_offset(lines, line_no, column_no):
++        offset = sum(len(l) for l in lines[:line_no - 1]) + column_no - 1
++        return offset
++
++    start_offset = get_offset(lines, start_line, start_column)
++    end_offset = get_offset(lines, end_line, end_column)
++
++    # Replace the code between start_offset and end_offset
++    modified_content = content[:start_offset] + new_code + content[end_offset:]
++
++    # Write the modified content back to the file
++    with open(file_path, 'w') as f:
++        f.write(modified_content)
++
++# endregion
++
++# region Helper functions for tests
++
++
++TEST_FILE_CONTENTS = """#include <stdio.h>
++#include <stdlib.h>
++
++int global_variable = 42;
++
++struct MyStruct {
++    int a;
++    float b;
++};
++
++/* This is a
++   multi-line comment before the function */
++// A simple function that we want to replace
++void fun() {
++    int x = 10;
++    printf("UNKNOWN");
++}
++
++/* Another comment */
++// Another function
++void hello() { printf("Hello, world!\\n"); }
++
++// A function with a nested block
++void nested_function() {
++  printf("Starting nested function\\n");
++  if (1) {
++    printf("Inside if block\\n");
++  }
++  printf("Ending nested function\\n");
++}
++
++// A function with no body (just declaration)
++void unimplemented_function();
++
++int main() {
++  fun();
++  hello();
++  nested_function();
++  return 0;
++}"""
++
++
++def create_test_file():
++    with open("example.c", 'w') as f:
++        f.write(TEST_FILE_CONTENTS)
++
++
++def delete_test_file():
++    if os.path.exists("example.c"):
++        os.remove("example.c")
++
++# endregion
++
++# region Delete function from file
++
++
++def delete_function_from_file(file_path, func_name):
++    """
++    Delete the function in the input C file, including preceding comments and blank lines,
++    and remove extra blank lines after the function.
++    """
++    # Parse the input file and get the AST
++    tu = parse_file(file_path)
++
++    # Find the target function
++    function_node = find_function(tu.cursor, func_name)
++    if function_node:
++        # Get the source location of the function
++        start = function_node.extent.start
++        end = function_node.extent.end
++
++        # Read the file content into lines
++        with open(file_path, 'r') as f:
++            lines = f.readlines()
++
++        # Initialize new_start_line and new_end_line
++        new_start_line = start.line
++        new_end_line = end.line
++
++        total_lines = len(lines)
++
++        # Move backward to include preceding comments and blank lines
++        while new_start_line > 1:
++            previous_line = lines[new_start_line - 2].strip()
++            if previous_line == '':
++                new_start_line -= 1
++            elif previous_line.startswith('//') or previous_line.startswith('/*') or previous_line.startswith('*') or previous_line.endswith('*/'):
++                new_start_line -= 1
++            else:
++                # Line contains code, stop
++                break
++
++        # Move forward to include succeeding blank lines
++        while new_end_line < total_lines:
++            next_line = lines[new_end_line].strip()
++            if next_line == '':
++                new_end_line += 1
++            else:
++                break
++
++        # Ensure we don't remove more than one blank line after deletion
++        if new_end_line - new_start_line > 1 and lines[new_end_line - 1].strip() == '':
++            new_end_line -= 1
++
++        # Now, set new_start and new_end positions
++        new_start = clang.cindex.SourceLocation.from_position(
++            tu, start.file, new_start_line, 1)
++        new_end = clang.cindex.SourceLocation.from_position(
++            tu, end.file, new_end_line + 1, 1)
++
++        # Prepare the replacement info to delete the function and surrounding blank lines
++        replacement_info = {
++            'start': new_start,
++            'end': new_end,
++            'new_code': ''
++        }
++
++        # Write the modified code back to the file
++        write_modified_code(replacement_info, file_path)
++
++    else:
++        print(f"Function {func_name} not found in {file_path}")
++
++
++def test_delete_function_from_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        func_name = "fun"
++        delete_function_from_file(file_path, func_name)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content (original content without the 'fun' function and preceding comments)
++        expected_content = """#include <stdio.h>
++#include <stdlib.h>
++
++int global_variable = 42;
++
++struct MyStruct {
++    int a;
++    float b;
++};
++
++/* Another comment */
++// Another function
++void hello() { printf("Hello, world!\\n"); }
++
++// A function with a nested block
++void nested_function() {
++  printf("Starting nested function\\n");
++  if (1) {
++    printf("Inside if block\\n");
++  }
++  printf("Ending nested function\\n");
++}
++
++// A function with no body (just declaration)
++void unimplemented_function();
++
++int main() {
++  fun();
++  hello();
++  nested_function();
++  return 0;
++}""".strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++    --- Actual Content ---
++    {modified_content}
++
++    --- Expected Content ---
++    {expected_content}
++    """
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Add function to file
++
++
++def add_function_to_file(file_path, new_code):
++    """
++    Add the new function code to the input C file
++    """
++    # Open the file and append the new function code
++    with open(file_path, 'a') as f:
++        f.write('\n' + new_code.strip() + '\n')
++
++
++def test_add_function_to_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        new_code = """
++void added_function() {
++    printf("This function was added dynamically!\\n");
++}
++"""
++        add_function_to_file(file_path, new_code)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content
++        expected_content = (TEST_FILE_CONTENTS.strip() +
++                            '\n' + new_code.strip()).strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++    --- Actual Content ---
++    {modified_content}
++
++    --- Expected Content ---
++    {expected_content}
++    """
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Delete struct from file
++
++
++def delete_struct_from_file(file_path, struct_name):
++    """
++    Delete the struct in the input C file, including preceding comments and blank lines,
++    and remove extra blank lines after the struct.
++    """
++    # Parse the input file and get the AST
++    tu = parse_file(file_path)
++
++    # Find the target struct
++    struct_node = find_struct(tu.cursor, struct_name)
++    if struct_node:
++        # Get the source location of the struct
++        start = struct_node.extent.start
++        end = struct_node.extent.end
++
++        # Read the file content into lines
++        with open(file_path, 'r') as f:
++            lines = f.readlines()
++
++        # Initialize new_start_line and new_end_line
++        new_start_line = start.line
++        new_end_line = end.line
++
++        total_lines = len(lines)
++
++        # Move backward to include preceding comments and blank lines
++        while new_start_line > 1:
++            previous_line = lines[new_start_line - 2].strip()
++            if previous_line == '':
++                new_start_line -= 1
++            elif previous_line.startswith('//') or previous_line.startswith('/*') or previous_line.startswith('*') or previous_line.endswith('*/'):
++                new_start_line -= 1
++            else:
++                # Line contains code, stop
++                break
++
++        # Move forward to include succeeding blank lines
++        while new_end_line < total_lines:
++            next_line = lines[new_end_line].strip()
++            if next_line == '':
++                new_end_line += 1
++            else:
++                break
++
++        # Ensure we don't remove more than one blank line after deletion
++        if new_end_line - new_start_line > 1 and lines[new_end_line - 1].strip() == '':
++            new_end_line -= 1
++
++        # Now, set new_start and new_end positions
++        new_start = clang.cindex.SourceLocation.from_position(
++            tu, start.file, new_start_line, 1)
++        new_end = clang.cindex.SourceLocation.from_position(
++            tu, end.file, new_end_line + 1, 1)
++
++        # Prepare the replacement info to delete the struct and surrounding blank lines
++        replacement_info = {
++            'start': new_start,
++            'end': new_end,
++            'new_code': ''
++        }
++
++        # Write the modified code back to the file
++        write_modified_code(replacement_info, file_path)
++
++    else:
++        print(f"Struct {struct_name} not found in {file_path}")
++
++
++def test_delete_struct_from_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        struct_name = "MyStruct"
++        delete_struct_from_file(file_path, struct_name)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content (original content without the 'MyStruct' struct and preceding comments)
++        expected_content = """#include <stdio.h>
++#include <stdlib.h>
++
++int global_variable = 42;
++
++/* This is a
++   multi-line comment before the function */
++// A simple function that we want to replace
++void fun() {
++    int x = 10;
++    printf("UNKNOWN");
++}
++
++/* Another comment */
++// Another function
++void hello() { printf("Hello, world!\\n"); }
++
++// A function with a nested block
++void nested_function() {
++  printf("Starting nested function\\n");
++  if (1) {
++    printf("Inside if block\\n");
++  }
++  printf("Ending nested function\\n");
++}
++
++// A function with no body (just declaration)
++void unimplemented_function();
++
++int main() {
++  fun();
++  hello();
++  nested_function();
++  return 0;
++}""".strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++    --- Actual Content ---
++    {modified_content}
++
++    --- Expected Content ---
++    {expected_content}
++    """
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Add struct to file
++
++
++def add_struct_to_file(file_path, new_code):
++    """
++    Add the new struct code to the input C file
++    """
++    # Open the file and append the new struct code
++    with open(file_path, 'a') as f:
++        f.write('\n' + new_code.strip() + '\n')
++
++
++def test_add_struct_to_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        new_code = """
++struct AddedStruct {
++    char c;
++    double d;
++};
++"""
++        add_struct_to_file(file_path, new_code)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content
++        expected_content = (TEST_FILE_CONTENTS.strip() +
++                            '\n' + new_code.strip()).strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++--- Actual Content ---
++{modified_content}
++
++--- Expected Content ---
++{expected_content}
++"""
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Delete variable from file
++
++
++def delete_variable_from_file(file_path, variable_name):
++    """
++    Delete the variable in the input C file, including preceding comments and blank lines,
++    and remove extra blank lines after the variable.
++    """
++    # Parse the input file and get the AST
++    tu = parse_file(file_path)
++
++    # Find the target variable
++    variable_node = find_variable(tu.cursor, variable_name)
++    if variable_node:
++        # Get the source location of the variable
++        start = variable_node.extent.start
++        end = variable_node.extent.end
++
++        # Read the file content into lines
++        with open(file_path, 'r') as f:
++            lines = f.readlines()
++
++        # Initialize new_start_line and new_end_line
++        new_start_line = start.line
++        new_end_line = end.line
++
++        total_lines = len(lines)
++
++        # Move backward to include preceding comments and blank lines
++        while new_start_line > 1:
++            previous_line = lines[new_start_line - 2].strip()
++            if previous_line == '':
++                new_start_line -= 1
++            elif previous_line.startswith('//') or previous_line.startswith('/*') or previous_line.startswith('*') or previous_line.endswith('*/'):
++                new_start_line -= 1
++            else:
++                # Line contains code, stop
++                break
++
++        # Move forward to include succeeding blank lines
++        while new_end_line < total_lines:
++            next_line = lines[new_end_line].strip()
++            if next_line == '':
++                new_end_line += 1
++            else:
++                break
++
++        # Ensure we don't remove more than one blank line after deletion
++        if new_end_line - new_start_line > 1 and lines[new_end_line - 1].strip() == '':
++            new_end_line -= 1
++
++        # Now, set new_start and new_end positions
++        new_start = clang.cindex.SourceLocation.from_position(
++            tu, start.file, new_start_line, 1)
++        new_end = clang.cindex.SourceLocation.from_position(
++            tu, end.file, new_end_line + 1, 1)
++
++        # Prepare the replacement info to delete the variable and surrounding blank lines
++        replacement_info = {
++            'start': new_start,
++            'end': new_end,
++            'new_code': ''
++        }
++
++        # Write the modified code back to the file
++        write_modified_code(replacement_info, file_path)
++
++    else:
++        print(f"Variable {variable_name} not found in {file_path}")
++
++
++def test_delete_variable_from_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        variable_name = "global_variable"
++        delete_variable_from_file(file_path, variable_name)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content (original content without the 'global_variable' and preceding comments)
++        expected_content = """#include <stdio.h>
++#include <stdlib.h>
++
++struct MyStruct {
++    int a;
++    float b;
++};
++
++/* This is a
++   multi-line comment before the function */
++// A simple function that we want to replace
++void fun() {
++    int x = 10;
++    printf("UNKNOWN");
++}
++
++/* Another comment */
++// Another function
++void hello() { printf("Hello, world!\\n"); }
++
++// A function with a nested block
++void nested_function() {
++  printf("Starting nested function\\n");
++  if (1) {
++    printf("Inside if block\\n");
++  }
++  printf("Ending nested function\\n");
++}
++
++// A function with no body (just declaration)
++void unimplemented_function();
++
++int main() {
++  fun();
++  hello();
++  nested_function();
++  return 0;
++}""".strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++--- Actual Content ---
++{modified_content}
++
++--- Expected Content ---
++{expected_content}
++"""
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Add variable to file
++
++
++def add_variable_to_file(file_path, new_code):
++    """
++    Add the new variable code to the input C file
++    """
++    # Open the file and append the new variable code
++    with open(file_path, 'a') as f:
++        f.write('\n' + new_code.strip() + '\n')
++
++
++def test_add_variable_to_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        new_code = """
++int added_global_variable = 100;
++"""
++        add_variable_to_file(file_path, new_code)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content
++        expected_content = (TEST_FILE_CONTENTS.strip() +
++                            '\n' + new_code.strip()).strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++--- Actual Content ---
++{modified_content}
++
++--- Expected Content ---
++{expected_content}
++"""
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Delete import from file
++
++
++def delete_import_from_file(file_path, import_name):
++    """
++    Delete the import in the input C file, including preceding comments and blank lines,
++    and remove extra blank lines after the import.
++    """
++    # Parse the input file and get the AST
++    tu = parse_file(file_path)
++
++    # Find the target import
++    import_node = find_import(tu.cursor, import_name)
++    if import_node:
++        # Get the source location of the import
++        start = import_node.extent.start
++        end = import_node.extent.end
++
++        # Read the file content into lines
++        with open(file_path, 'r') as f:
++            lines = f.readlines()
++
++        # Initialize new_start_line and new_end_line
++        new_start_line = start.line
++        new_end_line = end.line
++
++        total_lines = len(lines)
++
++        # Move backward to include preceding comments and blank lines
++        while new_start_line > 1:
++            previous_line = lines[new_start_line - 2].strip()
++            if previous_line == '':
++                new_start_line -= 1
++            elif previous_line.startswith('//') or previous_line.startswith('/*') or previous_line.startswith('*') or previous_line.endswith('*/'):
++                new_start_line -= 1
++            else:
++                # Line contains code, stop
++                break
++
++        # Move forward to include succeeding blank lines
++        while new_end_line < total_lines:
++            next_line = lines[new_end_line].strip()
++            if next_line == '':
++                new_end_line += 1
++            else:
++                break
++
++        # Ensure we don't remove more than one blank line after deletion
++        if new_end_line - new_start_line > 1 and lines[new_end_line - 1].strip() == '':
++            new_end_line -= 1
++
++        # Now, set new_start and new_end positions
++        new_start = clang.cindex.SourceLocation.from_position(
++            tu, start.file, new_start_line, 1)
++        new_end = clang.cindex.SourceLocation.from_position(
++            tu, end.file, new_end_line + 1, 1)
++
++        # Prepare the replacement info to delete the import and surrounding blank lines
++        replacement_info = {
++            'start': new_start,
++            'end': new_end,
++            'new_code': ''
++        }
++
++        # Write the modified code back to the file
++        write_modified_code(replacement_info, file_path)
++
++    else:
++        print(f"Import {import_name} not found in {file_path}")
++
++
++def test_delete_import_from_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        import_name = "stdlib.h"
++        delete_import_from_file(file_path, import_name)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content (original content without the '#include <stdlib.h>' and preceding comments)
++        expected_content = """#include <stdio.h>
++int global_variable = 42;
++
++struct MyStruct {
++    int a;
++    float b;
++};
++
++/* This is a
++   multi-line comment before the function */
++// A simple function that we want to replace
++void fun() {
++    int x = 10;
++    printf("UNKNOWN");
++}
++
++/* Another comment */
++// Another function
++void hello() { printf("Hello, world!\\n"); }
++
++// A function with a nested block
++void nested_function() {
++  printf("Starting nested function\\n");
++  if (1) {
++    printf("Inside if block\\n");
++  }
++  printf("Ending nested function\\n");
++}
++
++// A function with no body (just declaration)
++void unimplemented_function();
++
++int main() {
++  fun();
++  hello();
++  nested_function();
++  return 0;
++}""".strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++--- Actual Content ---
++{modified_content}
++
++--- Expected Content ---
++{expected_content}
++"""
++    finally:
++        delete_test_file()
++
++# endregion
++
++# region Add import to file
++
++
++def add_import_to_file(file_path, new_code):
++    """
++    Add the new import code to the input C file
++    """
++    # Open the file and insert the new import code after existing imports
++    with open(file_path, 'r') as f:
++        lines = f.readlines()
++
++    # Find the last import line
++    last_import_line = -1
++    for i, line in enumerate(lines):
++        if line.strip().startswith('#include'):
++            last_import_line = i
++
++    # If no imports are found, add at the beginning
++    insert_index = last_import_line + 1 if last_import_line != -1 else 0
++
++    lines.insert(insert_index, new_code.strip() + '\n')
++
++    # Write back to the file
++    with open(file_path, 'w') as f:
++        f.writelines(lines)
++
++
++def test_add_import_to_file():
++    create_test_file()
++    try:
++        file_path = "example.c"
++        new_code = """#include <string.h>"""
++        add_import_to_file(file_path, new_code)
++        # Read the modified file
++        with open(file_path, 'r') as f:
++            modified_content = f.read().strip()
++        # Expected content
++        expected_lines = TEST_FILE_CONTENTS.strip().split('\n')
++        # Insert new_code after existing imports
++        for i, line in enumerate(expected_lines):
++            if line.strip().startswith('#include'):
++                last_import_line = i
++        expected_lines.insert(last_import_line + 1, new_code.strip())
++        expected_content = '\n'.join(expected_lines).strip()
++        assert modified_content == expected_content, f"""Modified content does not match expected content.
++
++--- Actual Content ---
++{modified_content}
++
++--- Expected Content ---
++{expected_content}
++"""
++    finally:
++        delete_test_file()
++
++# endregion
++
++
++if __name__ == "__main__":
++    print("Testing delete_function_from_file:")
++    test_delete_function_from_file()
++    print("Test passed.\n")
++    print("Testing add_function_to_file:")
++    test_add_function_to_file()
++    print("Test passed.\n")
++    print("Testing delete_struct_from_file:")
++    test_delete_struct_from_file()
++    print("Test passed.\n")
++    print("Testing add_struct_to_file:")
++    test_add_struct_to_file()
++    print("Test passed.\n")
++    print("Testing delete_variable_from_file:")
++    test_delete_variable_from_file()
++    print("Test passed.\n")
++    print("Testing add_variable_to_file:")
++    test_add_variable_to_file()
++    print("Test passed.\n")
++    print("Testing delete_import_from_file:")
++    test_delete_import_from_file()
++    print("Test passed.\n")
++    print("Testing add_import_to_file:")
++    test_add_import_to_file()
++    print("Test passed.\n")
+
+COMMIT_HASH:703e367d14b50d48e25b83dff58dcc25503aac42|AUTHOR_NAME:Narek Galstyan|AUTHOR_EMAIL:narekg@berkeley.edu|DATE:2024-10-09 14:30:05 -0700|TITLE:Update readme|MESSAGE:
+diff --git a/README.md b/README.md
+index 7ff0cba..9a80339 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,19 @@
+ # openai-hack
+ 
+ Describe your project here.
++
++## Prerequisites
++
++`.env` file with openai key under env variable `OPENAI_API_KEY`
++
++I use [rye](https://rye.astral.sh/) to manage python versions, depeendencies and env, where running the project
++amounts to
++
++```bash
++git clone git@github.com:lanterndata/openai-hack.git
++cd openai-hack
++rye sync
++python ./src/openai_hack/__init__.py
++# to make sure editor picks up dependencies from env, you can optionally globally activate the python env via
++. ./.venv/bin/activate
++```
+
+COMMIT_HASH:43c54e05ff6eeb8b650fc1c1a1fbfc043ab72fe7|AUTHOR_NAME:Narek Galstyan|AUTHOR_EMAIL:narekg@berkeley.edu|DATE:2024-10-09 14:26:02 -0700|TITLE:Initial commit @openai hackathon|MESSAGE:
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..90360a1
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,13 @@
++# python generated files
++__pycache__/
++*.py[oc]
++build/
++dist/
++wheels/
++*.egg-info
++
++# venv
++.venv
++artifact
++.env
++openai_history.pkl
+diff --git a/.python-version b/.python-version
+new file mode 100644
+index 0000000..d9506ce
+--- /dev/null
++++ b/.python-version
+@@ -0,0 +1 @@
++3.12.5
+diff --git a/Dockerfile.dev b/Dockerfile.dev
+new file mode 100644
+index 0000000..d77e97c
+--- /dev/null
++++ b/Dockerfile.dev
+@@ -0,0 +1,79 @@
++ARG VERSION=15
++ARG PGVECTOR_VERSION=0.5.1
++  #fix pg_cron at the latest commit of the time
++ARG PG_CRON_COMMIT_SHA=7e91e72b1bebc5869bb900d9253cc9e92518b33f
++
++# If you want to build the base image for different versions use Dockerfile.pg
++# To use GDB inside container run docker like this:
++# docker build . -t lantern-dev
++# docker run --cap-add=SYS_PTRACE -p 5433:5432 -d --name lantern-dev lantern-dev
++# Then exec to it docker exec -ti -u root lantern-dev bash
++# gdb -p $pid_of_pg_backend
++
++FROM varik77/postgres:$VERSION-debug
++ARG PGVECTOR_VERSION
++ARG PG_CRON_COMMIT_SHA
++
++WORKDIR /lantern
++
++USER root
++ENV DEBIAN_FRONTEND=noninteractive
++RUN apt update && apt install -y curl lcov libpq5
++RUN apt update && apt install -y clang-15 gcc-12 g++-12
++
++# install ruby
++RUN apt update && apt install -y ruby-full
++RUN gem install bundler
++# need to install pg here to specify libpq location
++# it cannot be found by default since we installed pg from source
++RUN gem install pg -- --with-pg-include=/usr/local/pgsql/include/ --with-pg-lib=/usr/local/pgsql/lib/
++
++# hack to make sure postgres user has write access to externally mounted volumes
++RUN mkdir /lantern_shared && chown postgres:postgres /lantern_shared
++
++RUN cd /root/postgresql-15.5/contrib && make install -j
++
++# allow non-root users to install in the container to make it easier to run update-tests
++RUN chmod -R 777 /usr/local/pgsql/lib/ /usr/local/pgsql/share/extension/ /usr/local/pgsql/include/server/
++RUN mkdir -p /var/lib/postgresql/data && chown postgres:postgres /var/lib/postgresql/data
++USER postgres
++
++RUN pip install GitPython libtmux
++
++# Build & Install pgvector
++RUN wget --quiet -O pgvector.tar.gz https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz && \
++    tar xzf pgvector.tar.gz && \
++    (cd pgvector-${PGVECTOR_VERSION} && make -j && make install)
++
++# build & Install pg_cron
++RUN  git clone https://github.com/citusdata/pg_cron.git && \
++    (cd pg_cron && git checkout ${PG_CRON_COMMIT_SHA} && make -j && make install)
++
++
++# install rust
++RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
++# RUN cargo install --locked cargo-pgrx --version=0.11.3 && cargo pgrx init --pg15=`which pg_config`
++
++# Install perf
++# RUN sudo apt update && sudo apt install -y linux-tools-common linux-tools-generic linux-tools-`uname -r`
++# in host, enable perf_event paranoid via
++# echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
++
++ENV DATABASE_URL=postgres://postgres@localhost:5432/postgres
++ENV LANTERN_DATABASE_URL=postgres://postgres@localhost:5432/postgres
++
++# Uncomment the following to change the data directory of the running postgres
++# RUN /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data
++# RUN echo "listen_addresses '*' " >> /var/lib/postgresql/data/postgresql.conf
++RUN /usr/local/pgsql/bin/initdb -D /var/lib/postgresql/data
++RUN echo "shared_preload_libraries = 'pg_cron,pg_stat_statements' " >> /var/lib/postgresql/data/postgresql.conf && \
++    echo "wal_level = 'logical' " >> /var/lib/postgresql/data/postgresql.conf && \
++    echo "listen_addresses = '*' " >> /var/lib/postgresql/data/postgresql.conf && \
++    echo "shared_buffers = '4GB' " >> /var/lib/postgresql/data/postgresql.conf
++
++RUN echo "host    all             all             0.0.0.0/0               trust" >> /var/lib/postgresql/data/pg_hba.conf
++
++COPY . .
++
++# CMD ["/usr/local/pgsql/bin/postgres", "-D", "/var/lib/postgresql/data"]
++CMD ["/usr/local/pgsql/bin/postgres", "-D", "/var/lib/postgresql/data"]
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..7ff0cba
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,3 @@
++# openai-hack
++
++Describe your project here.
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..38b2665
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,12 @@
++version: "3.8"
++services:
++  lantern-dev-openai-hack:
++    build:
++      context: .
++      dockerfile: ./Dockerfile.dev
++    ports:
++      - "5555:5432"
++    volumes:
++      - .:/openai_hack
++    cap_add:
++      - SYS_PTRACE
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..52f34a2
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,30 @@
++[project]
++name = "openai-hack"
++version = "0.1.0"
++description = "Add your description here"
++authors = [
++    { name = "Narek Galstyan", email = "narekg@berkeley.edu" }
++]
++dependencies = [
++    "openai>=1.51.2",
++    "termcolor>=2.5.0",
++    "coloredlogs>=15.0.1",
++    "click>=8.1.7",
++    "python-dotenv>=1.0.1",
++]
++readme = "README.md"
++requires-python = ">= 3.8"
++
++[build-system]
++requires = ["hatchling"]
++build-backend = "hatchling.build"
++
++[tool.rye]
++managed = true
++dev-dependencies = []
++
++[tool.hatch.metadata]
++allow-direct-references = true
++
++[tool.hatch.build.targets.wheel]
++packages = ["src/openai_hack"]
+diff --git a/requirements-dev.lock b/requirements-dev.lock
+new file mode 100644
+index 0000000..0b7a5cc
+--- /dev/null
++++ b/requirements-dev.lock
+@@ -0,0 +1,59 @@
++# generated by rye
++# use `rye lock` or `rye sync` to update this lockfile
++#
++# last locked with the following flags:
++#   pre: false
++#   features: []
++#   all-features: false
++#   with-sources: false
++#   generate-hashes: false
++#   universal: false
++
++-e file:.
++annotated-types==0.7.0
++    # via pydantic
++anyio==4.6.0
++    # via httpx
++    # via openai
++certifi==2024.8.30
++    # via httpcore
++    # via httpx
++click==8.1.7
++    # via openai-hack
++coloredlogs==15.0.1
++    # via openai-hack
++distro==1.9.0
++    # via openai
++h11==0.14.0
++    # via httpcore
++httpcore==1.0.6
++    # via httpx
++httpx==0.27.2
++    # via openai
++humanfriendly==10.0
++    # via coloredlogs
++idna==3.10
++    # via anyio
++    # via httpx
++jiter==0.6.1
++    # via openai
++openai==1.51.2
++    # via openai-hack
++pydantic==2.9.2
++    # via openai
++pydantic-core==2.23.4
++    # via pydantic
++python-dotenv==1.0.1
++    # via openai-hack
++sniffio==1.3.1
++    # via anyio
++    # via httpx
++    # via openai
++termcolor==2.5.0
++    # via openai-hack
++tqdm==4.66.5
++    # via openai
++typing-extensions==4.12.2
++    # via openai
++    # via pydantic
++    # via pydantic-core
+diff --git a/requirements.lock b/requirements.lock
+new file mode 100644
+index 0000000..0b7a5cc
+--- /dev/null
++++ b/requirements.lock
+@@ -0,0 +1,59 @@
++# generated by rye
++# use `rye lock` or `rye sync` to update this lockfile
++#
++# last locked with the following flags:
++#   pre: false
++#   features: []
++#   all-features: false
++#   with-sources: false
++#   generate-hashes: false
++#   universal: false
++
++-e file:.
++annotated-types==0.7.0
++    # via pydantic
++anyio==4.6.0
++    # via httpx
++    # via openai
++certifi==2024.8.30
++    # via httpcore
++    # via httpx
++click==8.1.7
++    # via openai-hack
++coloredlogs==15.0.1
++    # via openai-hack
++distro==1.9.0
++    # via openai
++h11==0.14.0
++    # via httpcore
++httpcore==1.0.6
++    # via httpx
++httpx==0.27.2
++    # via openai
++humanfriendly==10.0
++    # via coloredlogs
++idna==3.10
++    # via anyio
++    # via httpx
++jiter==0.6.1
++    # via openai
++openai==1.51.2
++    # via openai-hack
++pydantic==2.9.2
++    # via openai
++pydantic-core==2.23.4
++    # via pydantic
++python-dotenv==1.0.1
++    # via openai-hack
++sniffio==1.3.1
++    # via anyio
++    # via httpx
++    # via openai
++termcolor==2.5.0
++    # via openai-hack
++tqdm==4.66.5
++    # via openai
++typing-extensions==4.12.2
++    # via openai
++    # via pydantic
++    # via pydantic-core
+diff --git a/src/openai_hack/__init__.py b/src/openai_hack/__init__.py
+new file mode 100644
+index 0000000..cfe9300
+--- /dev/null
++++ b/src/openai_hack/__init__.py
+@@ -0,0 +1,349 @@
++from openai import OpenAI
++import os
++import json
++from dotenv import load_dotenv
++from termcolor import colored
++import shutil
++import subprocess
++import click
++import pickle
++
++
++from typing import List, Optional
++from pydantic import BaseModel, Field
++import logging
++from coloredlogs import ColoredFormatter
++
++# Configure logging
++formatter = ColoredFormatter(
++    "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
++    datefmt="%Y-%m-%d %H:%M:%S",
++    level_styles={
++        "debug": {"color": "green"},
++        "info": {"color": "blue"},
++        "warning": {"color": "yellow"},
++        "error": {"color": "red"},
++        "critical": {"color": "red", "bold": True},
++    },
++)
++
++handler = logging.StreamHandler()
++handler.setFormatter(formatter)
++
++logger = logging.getLogger(__name__)
++logger.addHandler(handler)
++logger.setLevel(logging.DEBUG)
++
++load_dotenv()
++OPENAI_KEY = os.getenv("OPENAI_API_KEY")
++
++
++class File(BaseModel):
++    fileName: str
++    content: str
++    description: str
++    permissions: str = Field(
++        default="644", description="Optional file permissions, if needed (e.g., '755')."
++    )
++
++
++class Instructions(BaseModel):
++    buildCommands: List[str]
++    runCommands: List[str]
++    testCommands: List[str]
++
++
++class TaskFileGroup(BaseModel):
++    overallDescription: str
++    files: List[File]
++    instructions: Instructions
++
++
++class BuildResult(BaseModel):
++    success: bool
++    message: Optional[str] = None
++
++
++client = OpenAI(
++    api_key=OPENAI_KEY  # os.environ.get("OPENAI_API_KEY"),
++)
++
++
++MODEL = "o1-preview-2024-09-12"
++# MODEL = "o1-mini-2024-09-12"
++# MODEL = "gpt-4o-2024-08-06"
++
++ARTIFACT_FOLDER = "./artifact"
++HISTORY_PICKLE_FILE = "openai_history.pkl"
++OPENAI_HISTORY = {}
++
++
++class Artifact:
++    def __init__(self, name: str, overwrite=False):
++        self.name = name
++        if overwrite:
++            self.reset()
++
++        self._make_root_dir()
++
++    def _make_root_dir(self):
++        if not os.path.exists(ARTIFACT_FOLDER):
++            os.mkdir(ARTIFACT_FOLDER)
++        os.chdir(ARTIFACT_FOLDER)
++        if not os.path.exists(".git"):
++            os.system("git init -b main")
++        os.chdir("..")
++
++    def reset(self):
++        if os.path.exists(ARTIFACT_FOLDER):
++            shutil.rmtree(ARTIFACT_FOLDER)
++        self._make_root_dir()
++
++    def create_file(self, file: File):
++        file_path = os.path.join(ARTIFACT_FOLDER, file.fileName)
++        os.makedirs(os.path.dirname(file_path), exist_ok=True)
++        if os.path.exists(file_path):
++            with open(file_path, "r") as f:
++                raise Exception(
++                    f"Unable to create file {file.fileName} since it already exists with the content:",
++                    f.read(),
++                )
++        else:
++            with open(file_path, "w") as f:
++                f.write(file.content)
++            os.chmod(file_path, int(file.permissions, 8))
++
++    def run_instructions(self, instructions: Instructions) -> BuildResult:
++        os.chdir(ARTIFACT_FOLDER)
++        for command in instructions.buildCommands:
++            logger.debug("\t\tRunning make command: %s", command)
++
++            result = subprocess.run(
++                command, shell=True, check=False, capture_output=True, text=True
++            )
++
++            if result.returncode != 0:
++                return BuildResult(success=False, message=result.stderr)
++
++        return BuildResult(success=True)
++
++
++OUTPUT_JSON_SCHEMA = {
++    "$schema": "http://json-schema.org/draft-07/schema#",
++    "title": "TaskFileGroup",
++    "description": "Schema for a group of files required to accomplish a task with build, run, and test instructions.",
++    "type": "object",
++    "properties": {
++        "overallDescription": {
++            "type": "string",
++            "description": "A high-level description of what the group of files accomplishes.",
++        },
++        "files": {
++            "type": "array",
++            "description": "A list of files that need to be created.",
++            "items": {
++                "type": "object",
++                "properties": {
++                    "fileName": {
++                        "type": "string",
++                        "description": "The name of the file, including its relative path from the root.",
++                    },
++                    "content": {
++                        "type": "string",
++                        "description": "The content of the file, which could be code, configuration, or other data.",
++                    },
++                    "description": {
++                        "type": "string",
++                        "description": "A description of what the file does and its role in the overall task.",
++                    },
++                    "permissions": {
++                        "type": "string",
++                        "description": "Optional file permissions, if needed (e.g., '755').",
++                        "default": "644",
++                    },
++                },
++                "required": ["fileName", "content", "description"],
++            },
++        },
++        "instructions": {
++            "type": "object",
++            "description": "Instructions for building, running, and testing the project.",
++            "properties": {
++                "buildCommands": {
++                    "type": "array",
++                    "description": "A list of commands needed to build the project.",
++                    "items": {"type": "string"},
++                },
++                "runCommands": {
++                    "type": "array",
++                    "description": "A list of commands for running the project.",
++                    "items": {"type": "string"},
++                },
++                "testCommands": {
++                    "type": "array",
++                    "description": "A list of commands for testing the project.",
++                    "items": {"type": "string"},
++                },
++            },
++            "required": ["buildCommands", "runCommands", "testCommands"],
++        },
++    },
++    "required": ["overallDescription", "files", "instructions"],
++}
++
++
++def get_openai_response(prompt: str, mock=False) -> str:
++    if mock:
++        try:
++            return OPENAI_HISTORY[prompt]
++        except FileNotFoundError:
++            logger.warning("Note: No previous response found for mock mode.")
++
++    chat_completion = client.chat.completions.create(
++        messages=[
++            {
++                "role": "user",
++                "content": prompt,
++            }
++        ],
++        model=MODEL,
++        response_format={
++            "type": "json_object" if "o1" not in MODEL and "json" in prompt else "text"
++        },
++    )
++
++    response = chat_completion.choices[0].message.content
++    if not response:
++        raise Exception("No response from OpenAI")
++
++    # Write response to a file called last_response.pkl
++    OPENAI_HISTORY[prompt] = response
++
++    return response
++
++
++HARD_TASK_PROMPT_CUSTOM_SCAN = f"""
++## Summary
++    Imlement an example postgres extension that uses Postgre Custom Scan API to implement custom scan of a relation.
++    is it possible to use the Custom Scan API[1] to change the set of base relations that a query will be scanning? 
++
++## Task
++It seems the postgres core code extends the set of base relations used in case of partitioned and inherited relations[2] but my use-case does not fit in either.
++
++As a simple self-contained starting point, I want to intercept query like SELECT * FROM table1 WHERE condition() and use a plan that scans both table1 and an auxiliary table2 that has no relationship with table1.
++
++[1]: https://www.postgresql.org/docs/current/custom-scan-path.html
++[2]: https://github.com/postgres/postgres/blob/master/src/backend/optimizer/plan/planmain.c#L260-L268
++
++In a sense, I want table2 act as an index for table1 while still being a regular postgres base relation.
++(I know I can use the index API to actually put table2 data into an internal index structure of table1 but I specifically want to keep table2 as a base relation).
++
++My understanding is that the custom scan API does not expect the extension using it to open new unrelated relations. But is it still possible to do so?
++And if yes, could you point to some of the relevant APIs I should look at for doing that?
++
++Happy to elaborate more on why but I am generally experimenting with representing some kinds of indexes as base relations to use existing postgres codepaths on them and avoid reimplementing a bunch of things.
++
++## Output Instructions:
++Output the result as JSON. DO NOT output ```json surrounding marks in the json. The produced output must be directly parsable by json.loads in python. Output the answer as a json. 
++Use the following Json Schema spec for outputing the data in the correct schema. DO NOT reproduce the Json Schema below in the result but output json that is compliant with this spec
++
++{OUTPUT_JSON_SCHEMA}
++"""
++
++
++EASY_TASK_HELLO_WORLD_EXTENSION = f"""
++
++## Summary
++Write a postgres extension that prints hellow world and prints the version of the running postgres server.
++Use C to write the extension.
++
++## Task
++
++Write a C extension for postgres. Make sure the extension follows postgres extension development guidelines and has the necessary
++file straucture and layout. UYou are responsivle for creating all thenecessary files for building the extension and 
++for generating necessary build instructions
++
++
++## Test
++
++Make sure to write tests and run the tests as part of the build instructions
++
++## Output Instructions:
++Output the result as JSON. DO NOT output ```json surrounding marks in the json. The produced output must be directly parsable by json.loads in python. Output the answer as a json. 
++Use the following Json Schema spec for outputing the data in the correct schema. DO NOT reproduce the Json Schema below in the result but output json that is compliant with this spec
++
++
++{OUTPUT_JSON_SCHEMA}
++
++"""
++
++
++@click.command()
++@click.option(
++    "--mock", is_flag=True, help="Use mock response instead of calling OpenAI API."
++)
++@click.option(
++    "--overwrite", is_flag=True, help="Overwrite the current project if it exists."
++)
++def cli(mock, overwrite):
++    global OPENAI_HISTORY
++    try:
++        old_history = pickle.load(open(HISTORY_PICKLE_FILE, "rb"))
++        if old_history:
++            OPENAI_HISTORY = old_history
++
++        prompt = EASY_TASK_HELLO_WORLD_EXTENSION
++
++        next_prompt = prompt
++
++        logger.info("Starging new project...")
++        for iter in range(100):
++            logger.info("Iteration: %s", iter)
++
++            logger.info(f"\tPresenting the task to {MODEL}")
++            output = get_openai_response(next_prompt, mock=mock)
++
++            # try:
++            logger.info(f"\tParsing the expected response output")
++            try:
++                parsed_output = json.loads(output)
++                typed_output = TaskFileGroup.parse_obj(parsed_output)
++            except:
++                logger.error("Unable to parse the output as JSON..reporting the error")
++                next_prompt += f"""
++                the generated output {output} did not follow the required JSON schema spec {OUTPUT_JSON_SCHEMA}
++                """
++                continue
++
++            artifact = Artifact("postgres_extension", overwrite=overwrite)
++
++            logger.info(f"\tCreating files per model instructions")
++            for file in typed_output.files:
++                artifact.create_file(file)
++
++            logger.info(f"\tBuilding per model instructions")
++            build_result = artifact.run_instructions(typed_output.instructions)
++            if build_result.success:
++                logger.info("Build successful.")
++                break
++            else:
++                next_prompt += f"""
++## Proposed solution by {MODEL} at iteration {iter}
++                    {output}
++
++## Result: Build failure
++failure message: {build_result.message}
++
++Output a solution that can be built successfully.
++                """
++                continue
++
++    except Exception as e:
++        print(f"An error occurred: {e}")
++    finally:
++        with open(HISTORY_PICKLE_FILE, "wb") as f:
++            pickle.dump(OPENAI_HISTORY, f)
++
++
++if __name__ == "__main__":
++    cli()

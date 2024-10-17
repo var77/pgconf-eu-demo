@@ -1,15 +1,14 @@
 -- migrate:up
+create extension vector;
+
 create table repos (
-    "model" text,
-    "name" text,
-    "description" text,
-    primary key ("model", "name")
+    "name" text primary key
 );
 
 create table folders (
     "model" text,
     "repo" text,
-    "name" text.
+    "name" text,
     "description" text,
     "vector" vector(1536),
     primary key ("model", "name", "repo")
@@ -26,8 +25,22 @@ create table files (
     primary key ("model", "name", "folder", "repo")
 );
 
+create table commits (
+    "model" text,
+    "repo" text,
+    "id" text,
+    "author" text,
+    "date" text,
+    "changes" text,
+    "message" text,
+    "description" text,
+    "vector" vector(1536),
+    primary key ("model", "repo", "id")
+);
+
 -- migrate:down
 
 drop table files;
 drop table folders;
 drop table repos;
+drop table commits;
