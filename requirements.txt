@@ -4,3 +4,4 @@ numpy
 openai
 requests
 python-dotenv
+pgvector
