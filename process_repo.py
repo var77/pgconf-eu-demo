@@ -1,10 +1,10 @@
 import os
 import re
 import sys
-import json
 import psycopg2
-from openai import OpenAI
+from pgconf_utils import ask_openai, ask_ubicloud, OPENAI_CONTEXT_WINDOW, UBICLOUD_CONTEXT_WINDOW
 from dotenv import load_dotenv
+load_dotenv()
 
 FILE_PROMPT = """Here is some code. Summarize what the code does."""
 FILE_SUMMARIES_PROMPT = """Here are multiple summaries of sections of a file. Summarize what the code does."""
@@ -13,77 +13,68 @@ FOLDER_SUMMARIES_PROMPT = """Here are multiple summaries of the files and subfol
 REPO_PROMPT = """Here are the summaries of the folders in this repository. Summarize what the repository does."""
 COMMIT_PROMPT = """Here is a commit, including the commit message, and the changes made in the commit. Summarize the commit."""
 
-load_dotenv()
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+# Database
 DATABASE_URL = os.getenv("DATABASE_URL")
-client = OpenAI(api_key=OPENAI_KEY)
-MODEL = "gpt-4o-mini"
-CONTEXT_WINDOW = 128000
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 
 def is_acceptable_file(file_name):
-    return False
+    ACCEPTABLE_SUFFIXES = [
+        '.py', '.js', '.java', '.rb', '.go', '.rs', '.json',
+        '.yaml', '.yml', '.xml', '.md', '.txt', '.sh', '.sql', '.ts'
+    ]
+    ACCEPTABLE_FILENAMES = {'Makefile', 'Dockerfile'}
+    return (
+        any(file_name.endswith(suffix) for suffix in ACCEPTABLE_SUFFIXES) or
+        file_name in ACCEPTABLE_FILENAMES
+    )
 
 
 def is_acceptable_folder(folder_name):
-    return False
+    EXCLUDED_DIRS = {'.git', '.devcontainer', '.venv', 'node_modules', }
+    path_parts = folder_name.split(os.sep)
+    return not any(part in EXCLUDED_DIRS for part in path_parts)
 
 
-def insert_repo(repo_name, repo_description):
-    INSERT_REPO = f"""INSERT INTO repos ("name", "description", "model") VALUES (%s, %s, '{MODEL}') ON CONFLICT ("name", "model") DO NOTHING;"""
-    cur.execute(INSERT_REPO, (repo_name, repo_description.strip()))
+def insert_repo(repo_name):
+    INSERT_REPO = f"""INSERT INTO repos ("name") VALUES (%s) ON CONFLICT DO NOTHING;"""
+    cur.execute(INSERT_REPO, (repo_name,))
     conn.commit()
 
 
-def insert_folder(folder_name, repo_name, folder_description):
-    INSERT_FOLDER = f"""INSERT INTO folders ("name", "repo", "description", "model") VALUES (%s, %s, %s, '{MODEL}') ON CONFLICT ("name", "repo", "model") DO NOTHING;"""
-    cur.execute(INSERT_FOLDER, (folder_name,
-                repo_name, folder_description.strip()))
-    conn.commit()
-
-
-def insert_file(file_name, folder_name, repo_name, file_content, description):
-    INSERT_FILE = f"""INSERT INTO files ("name", "folder", "repo", "code", "description", "model") VALUES (%s, %s, %s, %s, %s, '{MODEL}') ON CONFLICT ("name", "folder", "repo", "model") DO NOTHING;"""
-    cur.execute(INSERT_FILE, (file_name, folder_name,
-                repo_name, file_content, description.strip()))
-    conn.commit()
-
-
-def insert_commit(model, repo_name, commit_id, author, date, changes, message, description):
-    INSERT_COMMIT = """
-        INSERT INTO commits ("model", "repo", "id", "author", "date", "changes", "message", "description")
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT ("model", "repo", "id") DO NOTHING;
+def insert_folder(folder_name, repo_name, llm_openai, llm_ubicloud):
+    INSERT_FOLDER = """
+        INSERT INTO folders ("name", "repo", "llm_openai", "llm_ubicloud")
+        VALUES (%s, %s, %s, %s) ON CONFLICT ("name", "repo") DO NOTHING;
     """
-    cur.execute(INSERT_COMMIT, (model, repo_name,
-                commit_id, author, date, changes, message, description))
+    cur.execute(INSERT_FOLDER, (folder_name, repo_name,
+                llm_openai.strip(), llm_ubicloud.strip()))
     conn.commit()
 
 
-def ask(prompt: str, type: str = "text") -> str:
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        model=MODEL,
-        response_format={
-            "type": type,
-        },
-    )
-    response = chat_completion.choices[0].message.content
-    if not response:
-        raise Exception("No response from OpenAI")
-    if type == 'json_object':
-        return json.loads(response)
-    return response
+def insert_file(file_name, folder_name, repo_name, file_content, llm_openai, llm_ubicloud):
+    INSERT_FILE = """
+        INSERT INTO files ("name", "folder", "repo", "code", "llm_openai", "llm_ubicloud")
+        VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT ("name", "folder", "repo") DO NOTHING;
+    """
+    cur.execute(INSERT_FILE, (file_name, folder_name, repo_name,
+                file_content, llm_openai.strip(), llm_ubicloud.strip()))
+    conn.commit()
 
 
-def chunk_file(file_content):
+def insert_commit(repo_name, commit_id, author, date, changes, message, llm_openai, llm_ubicloud):
+    INSERT_COMMIT = """
+        INSERT INTO commits ("repo", "id", "author", "date", "changes", "message", "llm_openai", "llm_ubicloud")
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT ("repo", "id") DO NOTHING;
+    """
+    cur.execute(INSERT_COMMIT, (repo_name, commit_id, author, date,
+                changes, message, llm_openai.strip(), llm_ubicloud.strip()))
+    conn.commit()
+
+
+def chunk_file(file_content, context_window):
     """
     Splits the file content into chunks, ensuring that each chunk ends at a function boundary.
     Specifically, it looks for `}` at the beginning of a line as a natural break point.
@@ -96,15 +87,17 @@ def chunk_file(file_content):
     lines = file_content.splitlines()
 
     for line in lines:
+        if len(line) > context_window:
+            line = line[:(context_window)]
         current_chunk.append(line)
         current_size += len(line)
 
         # If we've reached a size limit
         if (
-            (current_size >= CONTEXT_WINDOW and (
+            (current_size >= context_window and (
                 re.match(r'^\}', line) or re.match(r'^\};', line) or re.match(r'^\];$', line)))
-            or (current_size >= 2 * CONTEXT_WINDOW and (re.match(r'^\s{2}\}', line)))
-            or (current_size >= 3 * CONTEXT_WINDOW)
+            or (current_size >= 2 * context_window and (re.match(r'^\s{2}\}', line)))
+            or (current_size >= 3 * context_window)
         ):
             chunks.append("\n".join(current_chunk))
             current_chunk = []
@@ -122,84 +115,114 @@ def process_file(file_path, folder_name, repo_name):
 
     # If file already has a summary, skip processing and just return it
     cur.execute(
-        """SELECT "description" FROM files WHERE "name" = %s AND "folder" = %s AND "repo" = %s AND "model" = %s;""", (file_name, folder_name, repo_name, MODEL))
+        """SELECT "llm_openai", "llm_ubicloud" FROM files WHERE "name" = %s AND "folder" = %s AND "repo" = %s""", (file_name, folder_name, repo_name))
     row = cur.fetchone()
     if row:
-        return row[0]
+        return row
 
-    print(file_path)
-    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-        file_content = f.read()
-
-        # Break the file into chunks, ensuring we don't split in the middle of functions
-        chunks = chunk_file(file_content)
-
-        # Summarize each chunk and combine summaries
-        description = ""
+    # Summarize each chunk and combine summaries
+    def get_description(chunks, ask):
         if len(chunks) == 1:
-            description = ask(FILE_PROMPT + "\n\nFile: " +
-                              file_name + "\n\n" + chunks[0])
+            return ask(FILE_PROMPT + "\n\nFile: " + file_name + "\n\n" + chunks[0])
         else:
             descriptions = []
             for chunk in chunks:
                 descriptions.append(
                     ask(FILE_PROMPT + "\n\nFile: " + file_name + "\n\n" + chunk))
-            description = ask(FILE_SUMMARIES_PROMPT + "\n\nFile: " +
-                              file_name + "\n\n" + "\n".join(descriptions[:10]))
+            return ask(FILE_SUMMARIES_PROMPT + "\n\nFile: " + file_name + "\n\n" + "\n".join(descriptions[:10]))
+
+    print("File:", file_path)
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        file_content = f.read()
+
+        chunks_openai = chunk_file(file_content, OPENAI_CONTEXT_WINDOW)
+        chunks_ubicloud = chunk_file(file_content, UBICLOUD_CONTEXT_WINDOW)
+
+        llm_openai = get_description(chunks_openai, ask_openai)
+        llm_ubicloud = get_description(chunks_ubicloud, ask_ubicloud)
 
         # Insert the file and its components into the database
         insert_file(file_name, folder_name, repo_name,
-                    file_content, description)
+                    file_content, llm_openai, llm_ubicloud)
 
-        return description
+        return llm_openai, llm_ubicloud
 
 
 def process_folder(folder_path, repo_path, repo_name):
-    # If folder already has a summary, skip processing and just return it
+    if not is_acceptable_folder(folder_path):
+        return
+    print("Folder:", folder_path)
+
+    # If folder already has a summary, skip processing and just return
     cur.execute(
-        """SELECT "description" FROM folders WHERE "name" = %s AND "repo" = %s AND "model" = %s;""", (folder_path, repo_name, MODEL))
+        """SELECT "llm_openai", "llm_ubicloud" FROM folders WHERE "name" = %s AND "repo" = %s""", (folder_path, repo_name))
     row = cur.fetchone()
     if row:
-        return row[0]
+        return
 
     # Full relative folder path
     folder_name = os.path.relpath(folder_path, repo_path)
-    descriptions = []
+    llm_openai_list = []
+    llm_ubicloud_list = []
 
     # Process each file in the folder
     for item in os.listdir(folder_path):
         item_path = os.path.join(folder_path, item)
-        if os.path.isfile(item_path):
-            description = process_file(item_path, folder_name, repo_name)
-            descriptions.append(description)
-        elif os.path.isdir(item_path):
+        if os.path.isfile(item_path) and is_acceptable_file(item):
+            llm_openai, llm_ubicloud = process_file(
+                item_path, folder_name, repo_name)
+            if llm_openai:
+                llm_openai_list.append(llm_openai)
+            if llm_ubicloud:
+                llm_ubicloud_list.append(llm_ubicloud)
+        elif os.path.isdir(item_path) and is_acceptable_folder(item_path):
             # Retrieve the summary of the subfolder from the database
             subfolder_name = os.path.relpath(item_path, repo_path)
             cur.execute(
-                """SELECT "description" FROM folders WHERE "name" = %s AND "repo" = %s AND "model" = %s;""", (subfolder_name, repo_name, MODEL))
+                """SELECT "llm_openai", "llm_ubicloud" FROM folders WHERE "name" = %s AND "repo" = %s""", (subfolder_name, repo_name))
             subfolder_row = cur.fetchone()
             if subfolder_row and subfolder_row[0]:
-                descriptions.append(subfolder_row[0])
+                llm_openai = subfolder_row[0][0]
+                llm_ubicloud = subfolder_row[0][1]
+                if llm_openai:
+                    llm_openai_list.append(llm_openai)
+                if llm_ubicloud:
+                    llm_ubicloud_list.append(llm_ubicloud)
 
-    if len(descriptions) == 0:
-        return ""
+    def get_description(descriptions, ask, context_window):
+        max_descriptions = int(context_window / 400)
+        if len(descriptions) < max_descriptions:
+            return ask(FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
+        else:
+            combined_descriptions = []
+            for i in range(0, min(len(descriptions),  max_descriptions * max_descriptions), max_descriptions):
+                combined_description = ask(
+                    FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+max_descriptions]))
+                combined_descriptions.append(combined_description)
+            return ask(FOLDER_SUMMARIES_PROMPT + "\n\n" + "\n".join(combined_descriptions))
 
-    if len(descriptions) < 300:
-        combined_description = ask(
-            FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
-    else:
-        combined_descriptions = []
-        for i in range(0, min(len(descriptions),  90000), 300):
-            combined_description = ask(
-                FOLDER_PROMPT + "\n\n" + "\n".join(descriptions[i:i+300]))
-            combined_descriptions.append(combined_description)
-        combined_description = ask(
-            FOLDER_SUMMARIES_PROMPT + "\n\n" + "\n".join(combined_descriptions))
+    llm_openai = get_description(
+        llm_openai_list, ask_openai, OPENAI_CONTEXT_WINDOW)
+    llm_ubicloud = get_description(
+        llm_ubicloud_list, ask_ubicloud, UBICLOUD_CONTEXT_WINDOW)
 
-    combined_description = combined_description.strip()
+    insert_folder(folder_name, repo_name, llm_openai, llm_ubicloud)
 
-    # Insert the folder and its summary into the database
-    insert_folder(folder_name, repo_name,  combined_description)
+
+def extract_files_changed(diff_content):
+    """
+    Extracts a list of files changed from the diff content.
+    """
+    files_changed = set()
+    for line in diff_content.splitlines():
+        if line.startswith('diff --git'):
+            # Example line: diff --git a/file1.txt b/file1.txt
+            parts = line.split()
+            if len(parts) >= 3:
+                # Extract the file path (removing the 'a/' or 'b/' prefix)
+                file_path = parts[2].replace('b/', '').replace('a/', '')
+                files_changed.add(file_path)
+    return list(files_changed)
 
 
 def process_commits(repo_path, repo_name):
@@ -219,13 +242,22 @@ def process_commits(repo_path, repo_name):
 
     def maybe_save_commit():
         if commit_id:
-            # Concatenate title, description, author, and email into the message field
             author = f"{author_name} <{author_email}>"
-            description_input = f"{title}\n{message}\nChanges: {changes}\nAuthor: {author}>\nDate: {commit_date}"
-            description = ask(COMMIT_PROMPT + "\n\n" +
-                              description_input).strip()
-            insert_commit(MODEL, repo_name, commit_id, author, commit_date,
-                          changes, message, description)
+            try:
+                input = f"{title}\n{message}\nChanges: {changes}\nAuthor: {author}>\nDate: {commit_date}"
+                llm_openai = ask_openai(COMMIT_PROMPT + "\n\n" + input)
+                llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
+                insert_commit(repo_name, commit_id, author, commit_date,
+                              changes, message, llm_openai, llm_ubicloud)
+            except Exception as e:
+                print(
+                    f"Error processing commit {commit_id}: {e}")
+                files_changed = extract_files_changed(changes)
+                input = f"{title}\n{message}\Files changed: {', '.join(files_changed)}\nAuthor: {author}>\nDate: {commit_date}"
+                llm_openai = ask_openai(COMMIT_PROMPT + "\n\n" + input)
+                llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
+                insert_commit(repo_name, commit_id, author, commit_date,
+                              changes, message, llm_openai, llm_ubicloud)
 
     # Process each line to extract and insert commit data
     for line in lines:
@@ -280,6 +312,7 @@ def main(repo_name):
 
     # Walk through the directory tree
     for root, dirs, files in os.walk(repo_path, topdown=False):
+        dirs[:] = [d for d in dirs if is_acceptable_folder(d)]
         process_folder(root, repo_path, repo_name)
     insert_repo(repo_name)
 

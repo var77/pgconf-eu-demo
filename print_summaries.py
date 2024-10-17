@@ -9,14 +9,14 @@ MODEL = "gpt-4o-mini"
 
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
-
+column = "llm_openai"
+# column = "llm_ubicloud"
 
 repo = sys.argv[1]
 print("repo:", repo)
 
-# Select folders where zero slash or one slash is present
 cur.execute(
-    """SELECT "name", "description" FROM folders WHERE "name" NOT LIKE '%%/%%/%%' AND "name" <> '.' AND "repo" = %s AND "model" = %s;""", (repo, MODEL))
+    f"""SELECT "name", {column} FROM folders WHERE "name" NOT LIKE '%%/%%/%%' AND "name" <> '.' AND "repo" = %s;""", (repo,))
 rows = cur.fetchall()
 
 for row in rows:
@@ -28,7 +28,7 @@ for row in rows:
 
 if len(rows) == 0:
     cur.execute(
-        """SELECT "name", "description", "folder" FROM files WHERE "repo" = %s AND "model" = %s;""", (repo, MODEL))
+        f"""SELECT "name", {column}, "folder" FROM files WHERE "repo" = %s;""", (repo,))
     rows = cur.fetchall()
 
     for row in rows:

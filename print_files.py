@@ -47,5 +47,5 @@ if __name__ == "__main__":
 
     list_nested_files(repo, folders)
 
-cur.close()
-conn.close()
+    cur.close()
+    conn.close()

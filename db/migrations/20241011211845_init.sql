@@ -6,36 +6,39 @@ create table repos (
 );
 
 create table folders (
-    "model" text,
     "repo" text,
     "name" text,
-    "description" text,
-    "vector" vector(1536),
-    primary key ("model", "name", "repo")
+    "llm_openai" text,
+    "llm_ubicloud" text,
+    "vector_openai" vector(1536),
+    "vector_ubicloud" vector(4096),
+    primary key ("name", "repo")
 );
 
 create table files (
-    "model" text,
     "repo" text,
     "folder" text,
     "name" text,
     "code" text,
-    "description" text,
-    "vector" vector(1536),
-    primary key ("model", "name", "folder", "repo")
+    "llm_openai" text,
+    "llm_ubicloud" text,
+    "vector_openai" vector(1536),
+    "vector_ubicloud" vector(4096),
+    primary key ("name", "folder", "repo")
 );
 
 create table commits (
-    "model" text,
     "repo" text,
     "id" text,
     "author" text,
     "date" text,
     "changes" text,
     "message" text,
-    "description" text,
-    "vector" vector(1536),
-    primary key ("model", "repo", "id")
+    "llm_openai" text,
+    "llm_ubicloud" text,
+    "vector_openai" vector(1536),
+    "vector_ubicloud" vector(4096),
+    primary key ("repo", "id")
 );
 
 -- migrate:down
