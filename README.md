@@ -1,10 +1,9 @@
 ---
-title: PGConf EU Demo
+title: PGConf EU
 emoji: 🐘
-colorFrom: "#F34B7D"
-colorTo: "#FF6C11"
+colorFrom: yellow
+colorTo: purple
 sdk: gradio
-sdk_version: 4.44.1
 app_file: app.py
 pinned: false
 ---
