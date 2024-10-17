@@ -291,6 +291,9 @@ def process_commits(repo_path, repo_name):
     # Insert the last commit's data
     maybe_save_commit()
 
+    # Delete the temporary commit data file
+    os.remove('commit_data.txt')
+
 
 def main(repo_name):
     cur.execute(
