@@ -4,6 +4,7 @@ import sys
 import psycopg2
 from pgconf_utils import ask_openai, ask_ubicloud, OPENAI_CONTEXT_WINDOW, UBICLOUD_CONTEXT_WINDOW
 from dotenv import load_dotenv
+from backfill_embeddings import backfill
 load_dotenv()
 
 FILE_PROMPT = """Here is some code. Summarize what the code does."""
@@ -318,6 +319,8 @@ def main(repo_name):
         dirs[:] = [d for d in dirs if is_acceptable_folder(d)]
         process_folder(root, repo_path, repo_name)
     insert_repo(repo_name)
+
+    backfill(repo_name)
 
 
 if __name__ == '__main__':
