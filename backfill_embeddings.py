@@ -52,9 +52,25 @@ def backfill_files(repo: str):
     print("Backfilling for files complete.")
 
 
+def backfill_commits(repo: str):
+    cur.execute(FETCH_COMMITS, (repo, ))
+    commits = cur.fetchall()
+    print(f"Backfilling {len(commits)} commits...")
+    for commit in commits:
+        repo, commit_id, llm_openai, llm_ubicloud = commit
+        if llm_openai:
+            vector_ubicloud = generate_ubicloud_embedding(llm_ubicloud)
+            vector_openai = generate_openai_embedding(llm_openai)
+            cur.execute(UPDATE_EMBEDDING_COMMIT,
+                        (json.dumps(vector_openai), json.dumps(vector_ubicloud), repo, commit_id))
+            conn.commit()
+    print("Backfilling for commits complete.")
+
+
 def backfill(repo):
     backfill_folders(repo)
     backfill_files(repo)
+    backfill_commits(repo)
     print("Backfilling complete.")
 
 

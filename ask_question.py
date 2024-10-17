@@ -28,8 +28,6 @@ def query_files(provider, repo, vector, top_k=5):
     files = cur.fetchall()
     return files
 
-# Function to query folders based on vector similarity
-
 
 def query_folders(provider, repo, vector, top_k=5):
     FETCH_FOLDERS = f"""
@@ -46,35 +44,56 @@ def query_folders(provider, repo, vector, top_k=5):
     return folders
 
 
-def get_prompt(provider: str, repo: str, question: str, context_types=[]) -> str:
+def query_commits(provider, repo, vector, top_k=5):
+    FETCH_COMMITS = f"""
+        SELECT "repo", "id", llm_{provider}
+        FROM commits 
+        WHERE repo = %s
+        ORDER BY vector_{provider} <-> %s
+        LIMIT %s
+    """
+    if type(vector) == list:
+        vector = np.array(vector)
+    cur.execute(FETCH_COMMITS, (repo, vector, top_k))
+    commits = cur.fetchall()
+    return commits
+
+
+def get_prompt(provider: str, repo: str, question: str, context_types) -> str:
     if provider not in ["openai", "ubicloud"]:
         raise ValueError("Invalid provider. Must be 'openai' or 'ubicloud'.")
 
     vector = generate_openai_embedding(
         question) if provider == "openai" else generate_ubicloud_embedding(question)
-    folders = query_folders(provider, repo, vector)
-    files = query_files(provider, repo, vector)
 
     context = ""
 
-    if len(context_types) == 0 or "folders" in context_types:
+    if "folders" in context_types:
+        folders = query_folders(provider, repo, vector)
         for folder in folders:
             name, description = folder
             context += f"Folder: {name}\nDescription: {description}\n\n"
 
-    if len(context_types) == 0 or "files" in context_types:
+    if "files" in context_types:
+        files = query_files(provider, repo, vector)
         for file in files:
             name, code, folder_name, description = file
             context += f"File: {name}\nFolder: {folder_name}\nDescription: {description}\n\n"
 
+    if "commits" in context_types:
+        commits = query_commits(provider, repo, vector)
+        for commit in commits:
+            repo, commit_id, description = commit
+            context += f"Commit: {commit_id}\nDescription: {description}\n\n"
+
     if not context:
-        return "No relevant information found to answer your question."
+        return question
 
     prompt = f"Answer the following question based on the provided context.\n\nQuestion: {question}\n\nContext:\n{context}\n"
     return prompt
 
 
-def ask_with_context(provider: str, repo: str, question: str, context_types=[]) -> str:
+def ask_question(provider: str, repo: str, question: str, context_types) -> str:
     if provider not in ["openai", "ubicloud"]:
         raise ValueError("Invalid provider. Must be 'openai' or 'ubicloud'.")
 
@@ -92,10 +111,11 @@ if __name__ == '__main__':
     provider = sys.argv[1]
     repo_name = sys.argv[2]
     question = sys.argv[3]
-    prompt = get_prompt(provider, repo_name, question)
+    context_types = ["folders", "files", "commits"]
+    prompt = get_prompt(provider, repo_name, question, context_types)
     print(prompt)
 
-    answer = ask_with_context(provider, repo_name, question)
+    answer = ask_question(provider, repo_name, question)
     print("Answer:")
     print(answer)
 
