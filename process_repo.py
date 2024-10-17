@@ -23,9 +23,9 @@ cur = conn.cursor()
 def is_acceptable_file(file_name):
     ACCEPTABLE_SUFFIXES = [
         '.py', '.js', '.java', '.rb', '.go', '.rs', '.json',
-        '.yaml', '.yml', '.xml', '.md', '.txt', '.sh', '.sql', '.ts'
+        '.yaml', '.yml', '.xml', '.md', '.txt', '.sh', '.sql', '.ts', '.h', '.c', '.cpp', '.hpp', '.php', '.jsx', '.tsx', '.swift', '.kt', '.cs'
     ]
-    ACCEPTABLE_FILENAMES = {'Makefile', 'Dockerfile'}
+    ACCEPTABLE_FILENAMES = {'Makefile', 'Dockerfile', '.env'}
     return (
         any(file_name.endswith(suffix) for suffix in ACCEPTABLE_SUFFIXES) or
         file_name in ACCEPTABLE_FILENAMES
