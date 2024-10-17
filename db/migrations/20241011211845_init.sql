@@ -1,11 +1,11 @@
 -- migrate:up
-create extension vector;
+create extension if not exists vector;
 
-create table repos (
+create table if not exists repos (
     "name" text primary key
 );
 
-create table folders (
+create table if not exists folders (
     "repo" text,
     "name" text,
     "llm_openai" text,
@@ -15,7 +15,7 @@ create table folders (
     primary key ("name", "repo")
 );
 
-create table files (
+create table if not exists files (
     "repo" text,
     "folder" text,
     "name" text,
@@ -27,7 +27,7 @@ create table files (
     primary key ("name", "folder", "repo")
 );
 
-create table commits (
+create table if not exists commits (
     "repo" text,
     "id" text,
     "author" text,
