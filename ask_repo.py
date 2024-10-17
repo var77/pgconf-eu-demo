@@ -1,38 +1,40 @@
 import os
 import sys
-from pgvector.psycopg2 import register_vector
 import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-COMPLETION_MODEL = "gpt-4o-mini"
-EMBEDDING_MODEL = "text-embedding-3-small"
+COMPLETION_MODEL = "openai/gpt-4o-mini"
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
 
 conn = psycopg2.connect(DATABASE_URL)
-register_vector(conn)
 cur = conn.cursor()
 
 
 def query_files(repo, question, top_k=5):
     query = """
+        SET lantern_extras.openai_token = %s;
         SELECT "name", "code", "description" 
         FROM files 
         WHERE repo = %s
         ORDER BY vector <-> openai_embedding(%s, %s)
         LIMIT %s
     """
-    cur.execute(query, (repo, EMBEDDING_MODEL, question, top_k))
+    cur.execute(query, (OPENAI_KEY, repo, EMBEDDING_MODEL, question, top_k))
     files = cur.fetchall()
     return files
 
 
 def ask(question, context) -> str:
     query = """
+        SET lantern_extras.openai_token = %s;
         SELECT openai_completion(%s, %s, %s)
     """
-    cur.execute(query, (question, COMPLETION_MODEL, context))
+    cur.execute(query, (OPENAI_KEY, question, COMPLETION_MODEL, context))
+    answer = cur.fetchone()[0]
+    return answer
 
 
 def main(repo: str, question: str) -> str:
@@ -41,15 +43,16 @@ def main(repo: str, question: str) -> str:
 
     files = query_files(repo, question)
 
-    print("\RELEVANT FILES")
+    print("\nRELEVANT FILES")
+    context = ""
     for file in files:
         name, code, description = file
         print('-', name)
         context += f"File: {name}\nDescription: {description}\n\n"
     if not context:
         return "No relevant information found to answer your question."
-
     context = f"Answer user questions using the following context.\n\nContext:\n{context}\n"
+
     answer = ask(question, context)
     print("\nANSWER")
     print(answer)
