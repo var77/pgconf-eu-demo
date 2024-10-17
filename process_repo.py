@@ -23,7 +23,7 @@ cur = conn.cursor()
 def is_acceptable_file(file_name):
     ACCEPTABLE_SUFFIXES = [
         '.py', '.js', '.java', '.rb', '.go', '.rs', '.json',
-        '.yaml', '.yml', '.xml', '.md', '.txt', '.sh', '.sql', '.ts', '.h', '.c', '.cpp', '.hpp', '.php', '.jsx', '.tsx', '.swift', '.kt', '.cs'
+        '.yaml', '.yml', '.xml', '.md', '.txt', '.sh', '.sql', '.ts', '.h', '.c', '.cpp', '.hpp', '.php', '.jsx', '.tsx', '.swift', '.kt', '.cs', '.out'
     ]
     ACCEPTABLE_FILENAMES = {'Makefile', 'Dockerfile', '.env'}
     return (
@@ -229,7 +229,7 @@ def extract_files_changed(diff_content):
 def process_commits(repo_path, repo_name):
     # Extract commit data using git log
     os.system(
-        f"git -C {repo_path} log -p -n 10000 --pretty=format:'COMMIT_HASH:%H|AUTHOR_NAME:%an|AUTHOR_EMAIL:%ae|DATE:%ad|TITLE:%s|MESSAGE:%b' --date=iso > commit_data.txt"
+        f"git -C {repo_path} log -p -n 5000 --pretty=format:'COMMIT_HASH:%H|AUTHOR_NAME:%an|AUTHOR_EMAIL:%ae|DATE:%ad|TITLE:%s|MESSAGE:%b' --date=iso > commit_data.txt"
     )
 
     # Read commit data from file
@@ -240,8 +240,10 @@ def process_commits(repo_path, repo_name):
     commit_id = author_name = author_email = commit_date = title = message = ""
     changes = ""
     in_diff_section = False
+    commit_count = 0
 
     def maybe_save_commit():
+        nonlocal commit_count
         if commit_id:
             author = f"{author_name} <{author_email}>"
             try:
@@ -259,6 +261,9 @@ def process_commits(repo_path, repo_name):
                 llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
                 insert_commit(repo_name, commit_id, author, commit_date,
                               changes, message, llm_openai, llm_ubicloud)
+            commit_count += 1
+            if commit_count % 100 == 0:
+                print(f"Processed {commit_count} commits...")
 
     # Process each line to extract and insert commit data
     for line in lines:
@@ -297,6 +302,7 @@ def process_commits(repo_path, repo_name):
 
 
 def main(repo_name):
+    # Check if the repository has already been processed
     cur.execute(
         """SELECT "name" FROM repos WHERE "name" = %s""", (repo_name,))
     row = cur.fetchone()
@@ -310,14 +316,18 @@ def main(repo_name):
         print(
             f"Repository '{repo_name}' not found at expected path {repo_path}. Exiting...")
         return
-
-    # Process commits
-    process_commits(repo_path, repo_name)
+    print(f"Processing repository '{repo_name}'...")
 
     # Walk through the directory tree
+    print("Processing folders and files...")
     for root, dirs, files in os.walk(repo_path, topdown=False):
         dirs[:] = [d for d in dirs if is_acceptable_folder(d)]
         process_folder(root, repo_path, repo_name)
+
+    # Process commits
+    print("Processing commits...")
+    process_commits(repo_path, repo_name)
+
     insert_repo(repo_name)
 
     backfill(repo_name)
