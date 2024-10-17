@@ -228,7 +228,7 @@ def extract_files_changed(diff_content):
 def process_commits(repo_path, repo_name):
     # Extract commit data using git log
     os.system(
-        f"git -C {repo_path} log -p --pretty=format:'COMMIT_HASH:%H|AUTHOR_NAME:%an|AUTHOR_EMAIL:%ae|DATE:%ad|TITLE:%s|MESSAGE:%b' --date=iso > commit_data.txt"
+        f"git -C {repo_path} log -p -n 10000 --pretty=format:'COMMIT_HASH:%H|AUTHOR_NAME:%an|AUTHOR_EMAIL:%ae|DATE:%ad|TITLE:%s|MESSAGE:%b' --date=iso > commit_data.txt"
     )
 
     # Read commit data from file
