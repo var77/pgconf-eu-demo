@@ -245,6 +245,14 @@ def process_commits(repo_path, repo_name):
     def maybe_save_commit():
         nonlocal commit_count
         if commit_id:
+            # Check if the commit has already been processed
+            cur.execute(
+                """SELECT "id" FROM commits WHERE "repo" = %s AND "id" = %s""", (repo_name, commit_id))
+            row = cur.fetchone()
+            if row:
+                return
+
+            # Process the commit
             author = f"{author_name} <{author_email}>"
             try:
                 input = f"{title}\n{message}\nChanges: {changes}\nAuthor: {author}>\nDate: {commit_date}"
