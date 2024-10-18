@@ -236,46 +236,40 @@ def process_commits(repo_path, repo_name):
     with open('commit_data.txt', 'r') as file:
         lines = file.readlines()
 
+    # Previously processed commit IDs
+    cur.execute("""SELECT "id" FROM commits WHERE "repo" = %s""", (repo_name,))
+    processed_commit_ids = {row[0] for row in cur.fetchall()}
+
     # Variables to store commit data
     commit_id = author_name = author_email = commit_date = title = message = ""
-    changes = ""
+    changes_list = []
     in_diff_section = False
     commit_count = 0
 
     def maybe_save_commit():
         nonlocal commit_count
+        if commit_id in processed_commit_ids:
+            return
         if commit_id:
-            # Check if the commit has already been processed
-            cur.execute(
-                """SELECT "id" FROM commits WHERE "repo" = %s AND "id" = %s""", (repo_name, commit_id))
-            row = cur.fetchone()
-            if row:
-                return
-
-            # Process the commit
+            changes = "\n".join(changes_list)
             author = f"{author_name} <{author_email}>"
-            try:
+            if len(changes) < min(OPENAI_CONTEXT_WINDOW, UBICLOUD_CONTEXT_WINDOW):
                 input = f"{title}\n{message}\nChanges: {changes}\nAuthor: {author}>\nDate: {commit_date}"
-                llm_openai = ask_openai(COMMIT_PROMPT + "\n\n" + input)
-                llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
-                insert_commit(repo_name, commit_id, author, commit_date,
-                              changes, message, llm_openai, llm_ubicloud)
-            except Exception as e:
-                print(
-                    f"Error processing commit {commit_id}: {e}")
+            else:
                 files_changed = extract_files_changed(changes)
                 input = f"{title}\n{message}\Files changed: {', '.join(files_changed)}\nAuthor: {author}>\nDate: {commit_date}"
-                llm_openai = ask_openai(COMMIT_PROMPT + "\n\n" + input)
-                llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
-                insert_commit(repo_name, commit_id, author, commit_date,
-                              changes, message, llm_openai, llm_ubicloud)
+            llm_ubicloud = ask_ubicloud(COMMIT_PROMPT + "\n\n" + input)
+            llm_openai = ask_openai(COMMIT_PROMPT + "\n\n" + input)
+            insert_commit(repo_name, commit_id, author, commit_date,
+                          changes, message, llm_openai, llm_ubicloud)
             commit_count += 1
-            if commit_count % 100 == 0:
+            if commit_count % 10 == 0:
                 print(f"Processed {commit_count} commits...")
 
     # Process each line to extract and insert commit data
     for line in lines:
         line = line.strip()
+        print(line)
 
         if line.startswith("COMMIT_HASH:"):
             maybe_save_commit()
@@ -283,7 +277,7 @@ def process_commits(repo_path, repo_name):
             # Start reading a new commit
             commit_id = line.split("COMMIT_HASH:")[1].strip()
             in_diff_section = False
-            changes = ""  # Reset the diff for the next commit
+            changes_list = []
 
         elif line.startswith("AUTHOR_NAME:"):
             author_name = line.split("AUTHOR_NAME:")[1].strip()
@@ -300,13 +294,14 @@ def process_commits(repo_path, repo_name):
             in_diff_section = True
         elif in_diff_section:
             # Accumulate the diff (changes)
-            changes += line + "\n"
+            changes_list.append(line)
 
     # Insert the last commit's data
     maybe_save_commit()
 
     # Delete the temporary commit data file
-    os.remove('commit_data.txt')
+    if os.path.exists('commit_data.txt'):
+        os.remove('commit_data.txt')
 
 
 def main(repo_name):
