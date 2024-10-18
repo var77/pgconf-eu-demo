@@ -21,8 +21,8 @@ with gr.Blocks() as demo:
     gr.Markdown("# Chat Interface with Ubicloud and OpenAI")
 
     # First row: Repository selection
-    repo = gr.Radio(["citus", "postgres"],
-                    label="Select Repository", value="citus", interactive=True)
+    repo = gr.Radio(["pg_cron", "citus", "postgres"],
+                    label="Select Repository", value="pg_cron", interactive=True)
 
     # Second row: Question input
     question = gr.Textbox(label="Question", placeholder="Enter your question")
