@@ -6,7 +6,7 @@ load_dotenv()
 
 
 def chat_with_context(provider, repo, question, context_types):
-    return ask_question(provider, repo, question, context_types)
+    return ask_question(provider, repo, question, context_types, return_prompt=True)
 
 
 def chat_without_context(provider, repo, question):
@@ -35,11 +35,13 @@ with gr.Blocks() as demo:
             gr.Markdown("### OpenAI Response (No Context)")
             output_openai_no_context = gr.Markdown(
                 label="OpenAI Response (No Context)")
+            gr.Markdown("---")
 
         with gr.Column():
             gr.Markdown("### Ubicloud Response (No Context)")
             output_ubicloud_no_context = gr.Markdown(
                 label="Ubicloud Response (No Context)")
+            gr.Markdown("---")
 
     with gr.Row():
         # With context responses column.
@@ -47,11 +49,27 @@ with gr.Blocks() as demo:
             gr.Markdown("### OpenAI Response (With Context)")
             output_openai_with_context = gr.Markdown(
                 label="OpenAI Response (With Context)")
+            gr.Markdown("---")
 
         with gr.Column():
             gr.Markdown("### Ubicloud Response (With Context)")
             output_ubicloud_with_context = gr.Markdown(
                 label="Ubicloud Response (With Context)")
+            gr.Markdown("---")
+
+    with gr.Row():
+        # With context prompt column.
+        with gr.Column():
+            gr.Markdown("### OpenAI Prompt (With Context)")
+            output_openai_with_context_prompt = gr.Markdown(
+                label="OpenAI Prompt (With Context)")
+            gr.Markdown("---")
+
+        with gr.Column():
+            gr.Markdown("### Ubicloud Prompt (With Context)")
+            output_ubicloud_with_context_prompt = gr.Markdown(
+                label="Ubicloud Prompt (With Context)")
+            gr.Markdown("---")
 
     # Submit button to call the respective functions
     submit_btn = gr.Button("Ask")
@@ -73,13 +91,14 @@ with gr.Blocks() as demo:
         fn=lambda repo, question, context_types: chat_with_context(
             "openai", repo, question, context_types),
         inputs=[repo, question, context_types],
-        outputs=output_openai_with_context
+        outputs=[output_openai_with_context, output_openai_with_context_prompt]
     )
     submit_btn.click(
         fn=lambda repo, question, context_types: chat_with_context(
             "ubicloud", repo, question, context_types),
         inputs=[repo, question, context_types],
-        outputs=output_ubicloud_with_context
+        outputs=[output_ubicloud_with_context,
+                 output_ubicloud_with_context_prompt]
     )
 
 # Launch the Gradio app.

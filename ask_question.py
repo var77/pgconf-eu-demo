@@ -102,17 +102,20 @@ def get_prompt(provider: str, repo: str, question: str, context_types) -> str:
     if not context:
         return question
 
-    prompt = f"Answer the following question based on the provided context.\n\nQuestion: {question}\n\nContext:\n{context}\n"
+    prompt = "Answer the following question using the provided context. Cite specific portions of the given context if they were relevant to answering the question."
+    prompt += f"\n\nContext:\n{context}\n\nQuestion: {question}"
     return prompt
 
 
-def ask_question(provider: str, repo: str, question: str, context_types) -> str:
+def ask_question(provider: str, repo: str, question: str, context_types, return_prompt=False) -> str:
     if provider not in ["openai", "ubicloud"]:
         raise ValueError("Invalid provider. Must be 'openai' or 'ubicloud'.")
 
     prompt = get_prompt(provider, repo, question, context_types)
     ask = ask_openai if provider == "openai" else ask_ubicloud
     answer = ask(prompt)
+    if return_prompt:
+        return answer, prompt
     return answer
 
 
