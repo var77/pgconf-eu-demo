@@ -156,7 +156,7 @@ def process_folder(folder_path, repo_path, repo_name):
 
     # If folder already has a summary, skip processing and just return
     cur.execute(
-        """SELECT "llm_openai", "llm_ubicloud" FROM folders WHERE "name" = %s AND "repo" = %s""", (folder_path, repo_name))
+        """SELECT 1 FROM folders WHERE "name" = %s AND "repo" = %s""", (folder_path, repo_name))
     row = cur.fetchone()
     if row:
         return
