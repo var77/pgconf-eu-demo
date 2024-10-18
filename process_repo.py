@@ -191,7 +191,7 @@ def process_folder(folder_path, repo_path, repo_name):
                     llm_ubicloud_list.append(llm_ubicloud)
 
     def get_description(descriptions, ask, context_window):
-        max_descriptions = int(context_window / 400)
+        max_descriptions = int(context_window / 425)
         if len(descriptions) < max_descriptions:
             return ask(FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
         else:
@@ -328,10 +328,10 @@ def main(repo_name):
         process_folder(root, repo_path, repo_name)
 
     # Process commits
-    print("Processing commits...")
-    process_commits(repo_path, repo_name)
+    # print("Processing commits...")
+    # process_commits(repo_path, repo_name)
 
-    insert_repo(repo_name)
+    # insert_repo(repo_name)
 
     backfill(repo_name)
 
