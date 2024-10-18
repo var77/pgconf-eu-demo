@@ -9,9 +9,17 @@ from pgconf_utils import generate_openai_embedding, generate_ubicloud_embedding,
 # Load environment variables
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
-conn = psycopg2.connect(DATABASE_URL)
-register_vector(conn)
-cur = conn.cursor()
+
+
+def get_cursor():
+    conn = psycopg2.connect(DATABASE_URL)
+    register_vector(conn)
+    cur = conn.cursor()
+    try:
+        yield cur
+    finally:
+        cur.close()
+        conn.close()
 
 
 def query_files(provider, repo, vector, top_k=5):
@@ -24,9 +32,10 @@ def query_files(provider, repo, vector, top_k=5):
     """
     if type(vector) == list:
         vector = np.array(vector)
-    cur.execute(FETCH_FILES, (repo, vector, top_k))
-    files = cur.fetchall()
-    return files
+    with get_cursor() as cur:
+        cur.execute(FETCH_FILES, (repo, vector, top_k))
+        files = cur.fetchall()
+        return files
 
 
 def query_folders(provider, repo, vector, top_k=5):
@@ -39,9 +48,10 @@ def query_folders(provider, repo, vector, top_k=5):
     """
     if type(vector) == list:
         vector = np.array(vector)
-    cur.execute(FETCH_FOLDERS, (repo, vector, top_k))
-    folders = cur.fetchall()
-    return folders
+    with get_cursor() as cur:
+        cur.execute(FETCH_FOLDERS, (repo, vector, top_k))
+        folders = cur.fetchall()
+        return folders
 
 
 def query_commits(provider, repo, vector, top_k=5):
@@ -54,9 +64,10 @@ def query_commits(provider, repo, vector, top_k=5):
     """
     if type(vector) == list:
         vector = np.array(vector)
-    cur.execute(FETCH_COMMITS, (repo, vector, top_k))
-    commits = cur.fetchall()
-    return commits
+    with get_cursor() as cur:
+        cur.execute(FETCH_COMMITS, (repo, vector, top_k))
+        commits = cur.fetchall()
+        return commits
 
 
 def get_prompt(provider: str, repo: str, question: str, context_types) -> str:
@@ -112,13 +123,10 @@ if __name__ == '__main__':
     repo_name = sys.argv[2]
     question = sys.argv[3]
     context_types = ["folders", "files", "commits"]
+
     prompt = get_prompt(provider, repo_name, question, context_types)
     print(prompt)
 
     answer = ask_question(provider, repo_name, question)
     print("Answer:")
     print(answer)
-
-    # Close database connection
-    cur.close()
-    conn.close()

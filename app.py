@@ -2,10 +2,7 @@ import gradio as gr
 from dotenv import load_dotenv
 from ask_question import ask_question
 
-# Load environment variables
 load_dotenv()
-
-# Define the function that interacts with the backend logic.
 
 
 def chat_with_context(provider, repo, question, context_types):
