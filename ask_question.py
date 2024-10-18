@@ -109,7 +109,7 @@ def get_prompt(provider: str, repo: str, question: str, context_types) -> str:
         map(lambda i: f"**CONTEXT {i + 1} / {context_count}**\n" +
             context[i], range(context_count))
     )
-    prompt = '\n'.join([f"Answer the question about the {repo} using the provided context. Cite specific portions of the given context if they were relevant to answering the question.",
+    prompt = '\n'.join([f"Answer the question about the {repo} repo using the provided context. Cite specific portions of the given context if they were relevant to answering the question.",
                         '-------------------------------',
                         '**QUESTION**: ' + question,
                         '-------------------------------',
