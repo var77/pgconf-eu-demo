@@ -22,7 +22,8 @@ with gr.Blocks() as demo:
                     label="Select Repository", value="pg_cron", interactive=True)
 
     # Second row: Question input
-    question = gr.Textbox(label="Question", placeholder="Enter your question")
+    question = gr.Textbox(
+        label="Question", placeholder="Enter your question")
 
     # Third row: Context types selection
     context_types = gr.CheckboxGroup(
@@ -38,9 +39,9 @@ with gr.Blocks() as demo:
             gr.Markdown("---")
 
         with gr.Column():
-            gr.Markdown("### Ubicloud Response (No Context)")
+            gr.Markdown("### Llama Response (No Context)")
             output_ubicloud_no_context = gr.Markdown(
-                label="Ubicloud Response (No Context)")
+                label="Llama Response (No Context)")
             gr.Markdown("---")
 
     with gr.Row():
@@ -52,9 +53,9 @@ with gr.Blocks() as demo:
             gr.Markdown("---")
 
         with gr.Column():
-            gr.Markdown("### Ubicloud Response (With Context)")
+            gr.Markdown("### Llama Response (With Context)")
             output_ubicloud_with_context = gr.Markdown(
-                label="Ubicloud Response (With Context)")
+                label="Llama Response (With Context)")
             gr.Markdown("---")
 
     with gr.Row():
@@ -66,9 +67,9 @@ with gr.Blocks() as demo:
             gr.Markdown("---")
 
         with gr.Column():
-            gr.Markdown("### Ubicloud Prompt (With Context)")
+            gr.Markdown("### Llama Prompt (With Context)")
             output_ubicloud_with_context_prompt = gr.Markdown(
-                label="Ubicloud Prompt (With Context)")
+                label="Llama Prompt (With Context)")
             gr.Markdown("---")
 
     # Submit button to call the respective functions
@@ -94,6 +95,32 @@ with gr.Blocks() as demo:
         outputs=[output_openai_with_context, output_openai_with_context_prompt]
     )
     submit_btn.click(
+        fn=lambda repo, question, context_types: chat_with_context(
+            "ubicloud", repo, question, context_types),
+        inputs=[repo, question, context_types],
+        outputs=[output_ubicloud_with_context,
+                 output_ubicloud_with_context_prompt]
+    )
+
+    question.submit(
+        fn=lambda repo, question: chat_without_context(
+            "openai", repo, question),
+        inputs=[repo, question],
+        outputs=output_openai_no_context
+    )
+    question.submit(
+        fn=lambda repo, question: chat_without_context(
+            "ubicloud", repo, question),
+        inputs=[repo, question],
+        outputs=output_ubicloud_no_context
+    )
+    question.submit(
+        fn=lambda repo, question, context_types: chat_with_context(
+            "openai", repo, question, context_types),
+        inputs=[repo, question, context_types],
+        outputs=[output_openai_with_context, output_openai_with_context_prompt]
+    )
+    question.submit(
         fn=lambda repo, question, context_types: chat_with_context(
             "ubicloud", repo, question, context_types),
         inputs=[repo, question, context_types],

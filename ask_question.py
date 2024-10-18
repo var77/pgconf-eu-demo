@@ -79,31 +79,42 @@ def get_prompt(provider: str, repo: str, question: str, context_types) -> str:
     vector = generate_openai_embedding(
         question) if provider == "openai" else generate_ubicloud_embedding(question)
 
-    context = ""
+    context = []
 
     if "folders" in context_types:
         folders = query_folders(provider, repo, vector)
         for folder in folders:
             name, description = folder
-            context += f"Folder: {name}\nDescription: {description}\n\n"
+            context.append(f"FOLDER: {name}\nDESCRIPTION: {description}")
 
     if "files" in context_types:
         files = query_files(provider, repo, vector)
         for file in files:
             name, code, folder_name, description = file
-            context += f"File: {name}\nFolder: {folder_name}\nDescription: {description}\n\n"
+            context.append(
+                f"FILE: {name}\nFOLDER: {folder_name}\nDESCRIPTION:\n{description}")
 
     if "commits" in context_types:
         commits = query_commits(provider, repo, vector)
         for commit in commits:
             repo, commit_id, description = commit
-            context += f"Commit: {commit_id}\nDescription: {description}\n\n"
+            context.append(
+                f"COMMIT: {commit_id}\nDESCRIPTION: {description}\n\n")
 
-    if not context:
-        return question
+    context_count = len(context)
+    if context_count == 0:
+        return f"Answer the question about the {repo} repo: {question}"
 
-    prompt = "Answer the following question using the provided context. Cite specific portions of the given context if they were relevant to answering the question."
-    prompt += f"\n\nContext:\n{context}\n\nQuestion: {question}"
+    context_string = '\n\n'.join(
+        map(lambda i: f"**CONTEXT {i + 1} / {context_count}**\n" +
+            context[i], range(context_count))
+    )
+    prompt = '\n'.join([f"Answer the question about the {repo} using the provided context. Cite specific portions of the given context if they were relevant to answering the question.",
+                        '-------------------------------',
+                        '**QUESTION**: ' + question,
+                        '-------------------------------',
+                        context_string,
+                        ])
     return prompt
 
 
