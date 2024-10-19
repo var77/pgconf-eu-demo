@@ -191,7 +191,7 @@ def process_folder(folder_path, repo_path, repo_name):
                     llm_ubicloud_list.append(llm_ubicloud)
 
     def get_description(descriptions, ask, context_window):
-        max_descriptions = int(context_window / 425)
+        max_descriptions = int(context_window / 450)
         if len(descriptions) < max_descriptions:
             return ask(FOLDER_PROMPT + "\n\n" + "\n".join(descriptions))
         else:
