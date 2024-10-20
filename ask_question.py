@@ -132,7 +132,7 @@ def ask_question(provider: str, repo: str, question: str, context_types, return_
 
 if __name__ == '__main__':
     if len(sys.argv) != 4:
-        print("Usage: python qa_rag.py <provider> <repo> <question>")
+        print("Usage: python ask_question.py <provider> <repo> <question>")
         sys.exit(1)
 
     provider = sys.argv[1]
