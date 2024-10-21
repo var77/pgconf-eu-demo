@@ -15,13 +15,19 @@ python3 -m pip install -r requirements.txt
 3. Create Lantern Database from Ubicloud Dashboard
 Go to https://www.ubicloud.com/ and create a new Lantern Database
 
-4. Setup Database
+4. Setup environment variables
 ```bash
-LLM_BATCH_SIZE=150 DATABASE_URL='<db_url>' OPENAI_API_KEY='<openai_api_key>' python3 process_repo.py citus repos/citus/src/backend
+export DATABASE_URL='<db_url>'
+export OPENAI_API_KEY='<openai_token>'
+export LLM_BATCH_SIZE=150
 ```
-Batch size is based on OpenAI key tier (~10 for tier1, ~150 for tier5)
-
-4. Ask questions
+5. Setup Database
 ```bash
- DATABASE_URL='<db_url>' python3 ask_repo.py citus 'How is sharding implemented';
+python3 process_repo.py citus repos/citus/src/backend
+```
+Batch size is based on OpenAI key tier (~10 for tier 1, ~150 for tier 5)
+
+6. Ask questions
+```bash
+python3 ask_repo.py citus 'How is sharding implemented';
 ```
