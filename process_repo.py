@@ -82,15 +82,20 @@ def main(repo_name, repo_path):
     conn.autocommit = True  # Enable auto commit to immediately execute commands
     cursor = conn.cursor()
 
+    print("[*] Setting up table...")
     cursor.execute('CREATE TABLE IF NOT EXISTS files(id serial PRIMARY KEY, name text, code text, folder text, repo text);')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS name_repo_idx ON files (name, repo);')
 
+    print("[*] Start processing files...")
     process_files(cursor, repo_name, repo_path)
     
+    print("[*] Enable Lantern Daemon...")
     cursor.execute('ALTER SYSTEM SET lantern_extras.enable_daemon=true;')
     cursor.execute(f"ALTER DATABASE postgres SET lantern_extras.llm_token='{OPENAI_API_KEY}';")
+    cursor.execute(f"SET lantern_extras.llm_token='{OPENAI_API_KEY}';")
     cursor.execute('SELECT pg_reload_conf();')
 
+    print("[*] Adding Completion Job...")
     cursor.execute(f"SELECT add_completion_job('files', 'code', 'description', 'Summarize this code', 'TEXT', 'openai/gpt-4o-mini', {LLM_BATCH_SIZE});")
 
     # Monitor progress of the completion job
@@ -98,10 +103,11 @@ def main(repo_name, repo_path):
         time.sleep(10)
         cursor.execute('SELECT progress FROM get_completion_jobs() LIMIT 1;')
         progress = cursor.fetchone()[0]
-        print(f"Completion Job Progress is {progress}%")
+        print(f"[*] Completion Job Progress is {progress}%")
         if progress == 100:
             break
 
+    print("[*] Adding Embedding Job...")
     cursor.execute("SELECT add_embedding_job('files', 'description', 'vector', 'text-embedding-3-small', 'openai');")
 
     # Monitor progress of the embedding job
@@ -109,17 +115,18 @@ def main(repo_name, repo_path):
         time.sleep(10)
         cursor.execute('SELECT progress FROM get_embedding_jobs() LIMIT 1;')
         progress = cursor.fetchone()[0]
-        print(f"Embedding Job Progress is {progress}%")
+        print(f"[*] Embedding Job Progress is {progress}%")
         if progress == 100:
             break
         
+    print("[*] Creating ask(TEXT, TEXT) function...")
     cursor.execute(ASK_FUNCTION_SQL)
 
     cursor.close()
     conn.close()
     
-    print("Setup completed successfully!")
-    print("Use: 'python ask_repo.py <repo> <question>' to ask questions")
+    print("[*] Setup completed successfully!")
+    print("[*] Use: 'python ask_repo.py <repo> <question>' to ask questions")
 
 if __name__ == '__main__':
     if len(sys.argv) > 2:

@@ -2,7 +2,7 @@
 
 1. Clone the repo you want to index under repos/
 ```bash
-git clone https://github.com/citusdata/citus.git repos/citus
+git clone --depth 1 https://github.com/citusdata/citus.git repos/citus
 ```
 
 2. Setup python dependencies
